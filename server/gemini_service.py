@@ -12,7 +12,6 @@ from config import (
     GEMINI_API_KEY,
     GEMINI_MODEL,
     MAX_RETRIES,
-    MUSIC_DIR,
     RETRY_BACKOFF,
 )
 from models import EditingPlan, MusicTrack, SceneAnalysisResult, VideoInfo
@@ -72,49 +71,6 @@ def _delete_uploaded_files(files: list[types.File]) -> None:
             client.files.delete(name=f.name)
         except Exception:
             pass
-
-
-# ---------------------------------------------------------------------------
-# Music selection
-# ---------------------------------------------------------------------------
-
-def load_music_catalog() -> list[MusicTrack]:
-    """Load the music catalog from catalog.json."""
-    catalog_path = MUSIC_DIR / "catalog.json"
-    with open(catalog_path) as f:
-        data = json.load(f)
-    return [MusicTrack(**track) for track in data["tracks"]]
-
-
-def pick_music_track(prompt: str, catalog: list[MusicTrack]) -> MusicTrack:
-    """Use Gemini to pick the best music track based on the prompt vibe."""
-    tracks_desc = "\n".join(
-        f'- {t.filename}: "{t.name}" (genre: {t.genre}, vibe: {t.vibe}, BPM: {t.bpm}, '
-        f'duration: {t.duration}s, tags: {", ".join(t.tags)})'
-        for t in catalog
-    )
-
-    response = _call_gemini(
-        f"""Pick the best music track for this reel.
-
-User prompt: "{prompt}"
-
-Available tracks:
-{tracks_desc}
-
-Match the track's genre, vibe, and tags to the user's prompt. Consider the mood and content type.
-Return ONLY the filename of the best matching track (e.g., "pop_upbeat_01.mp3"). Nothing else.""",
-        temperature=0.3,
-    )
-
-    chosen_filename = response.text.strip().strip('"').strip("'")
-
-    for track in catalog:
-        if track.filename == chosen_filename:
-            return track
-
-    log.warning("  Gemini picked '%s' which wasn't found, using first track", chosen_filename)
-    return catalog[0]
 
 
 # ---------------------------------------------------------------------------

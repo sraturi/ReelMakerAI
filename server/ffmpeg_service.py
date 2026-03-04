@@ -5,7 +5,7 @@ import logging
 import subprocess
 from pathlib import Path
 
-from config import AUDIO_SAMPLE_RATE, FONT_PATH, MUSIC_VOLUME, OUTPUT_HEIGHT, OUTPUT_WIDTH
+from config import AUDIO_SAMPLE_RATE, FONT_PATH, OUTPUT_HEIGHT, OUTPUT_WIDTH
 from models import EditingPlan, VideoInfo
 
 log = logging.getLogger(__name__)
@@ -139,17 +139,15 @@ def _build_drawtext_filter(
 def build_ffmpeg_command(
     plan: EditingPlan,
     videos: list[VideoInfo],
-    music_path: str,
     output_path: str,
-    audio_mode: str = "both",
+    audio_mode: str = "voice",
 ) -> list[str]:
     """
     Build an FFmpeg command that:
     1. Cuts clips according to the editing plan (video + audio)
     2. Scales/crops each clip to OUTPUT_WIDTH x OUTPUT_HEIGHT
     3. Concatenates clips with their original audio
-    4. Mixes in light background music
-    5. Burns in text overlays
+    4. Burns in text overlays
     """
     cmd = ["ffmpeg", "-y"]
 
@@ -161,11 +159,6 @@ def build_ffmpeg_command(
             cmd.extend(["-i", videos[clip.source_index].path])
             input_indices[clip.source_index] = ffmpeg_idx
             ffmpeg_idx += 1
-
-    music_input_idx = None
-    if audio_mode in ("music", "both"):
-        music_input_idx = ffmpeg_idx
-        cmd.extend(["-i", music_path])
 
     # --- Build filter_complex ---
     filters = []
@@ -194,20 +187,19 @@ def build_ffmpeg_command(
         )
 
         # Per-clip audio
-        # "original" keeps all audio; "voice"/"both" respect Gemini mute flags
-        if audio_mode != "music":
-            clip_dur = clip.end_time - clip.start_time
-            if clip.audio == "mute" and audio_mode != "original":
-                filters.append(
-                    f"aevalsrc=0:d={clip_dur:.3f},"
-                    f"aformat=sample_rates={sr}:channel_layouts=stereo[{a_clip}]"
-                )
-            else:
-                filters.append(
-                    f"[{src_idx}:a]atrim=start={clip.start_time:.3f}:end={clip.end_time:.3f},"
-                    f"asetpts=PTS-STARTPTS[{a_clip}]"
-                )
-            audio_concat_inputs.append(f"[{a_clip}]")
+        # "original" keeps all audio; "voice" respects Gemini mute flags
+        clip_dur = clip.end_time - clip.start_time
+        if clip.audio == "mute" and audio_mode != "original":
+            filters.append(
+                f"aevalsrc=0:d={clip_dur:.3f},"
+                f"aformat=sample_rates={sr}:channel_layouts=stereo[{a_clip}]"
+            )
+        else:
+            filters.append(
+                f"[{src_idx}:a]atrim=start={clip.start_time:.3f}:end={clip.end_time:.3f},"
+                f"asetpts=PTS-STARTPTS[{a_clip}]"
+            )
+        audio_concat_inputs.append(f"[{a_clip}]")
 
         video_concat_inputs.append(f"[{v_scaled}]")
 
@@ -218,18 +210,17 @@ def build_ffmpeg_command(
     )
 
     # Crossfade audio clips
-    if audio_mode != "music":
-        if n_clips == 1:
-            filters.append(f"{audio_concat_inputs[0]}anull[concata]")
-        else:
-            prev = audio_concat_inputs[0].strip("[]")
-            for k in range(1, n_clips):
-                cur = audio_concat_inputs[k].strip("[]")
-                out_label = "concata" if k == n_clips - 1 else f"axf{k}"
-                filters.append(
-                    f"[{prev}][{cur}]acrossfade=d=0.3:c1=tri:c2=tri[{out_label}]"
-                )
-                prev = out_label
+    if n_clips == 1:
+        filters.append(f"{audio_concat_inputs[0]}anull[concata]")
+    else:
+        prev = audio_concat_inputs[0].strip("[]")
+        for k in range(1, n_clips):
+            cur = audio_concat_inputs[k].strip("[]")
+            out_label = "concata" if k == n_clips - 1 else f"axf{k}"
+            filters.append(
+                f"[{prev}][{cur}]acrossfade=d=0.3:c1=tri:c2=tri[{out_label}]"
+            )
+            prev = out_label
 
     # Text overlays
     current_video = "concatv"
@@ -247,39 +238,11 @@ def build_ffmpeg_command(
         ))
         current_video = next_label
 
-    # --- Audio output (mode-dependent) ---
-    fade_start = max(0, plan.total_duration - 1.0)
-
-    if audio_mode in ("voice", "original"):
-        filters.append(
-            f"[concata]aformat=sample_rates={sr}:channel_layouts=stereo,"
-            "loudnorm=I=-14:TP=-1:LRA=11[outa]"
-        )
-    elif audio_mode == "music":
-        filters.append(
-            f"[{music_input_idx}:a]atrim=0:{plan.total_duration:.3f},"
-            f"asetpts=PTS-STARTPTS,"
-            f"afade=t=in:st=0:d=1.0,"
-            f"afade=t=out:st={fade_start:.3f}:d=1.0,"
-            f"aformat=sample_rates={sr}:channel_layouts=stereo,"
-            f"loudnorm=I=-14:TP=-1:LRA=11[outa]"
-        )
-    else:
-        filters.append(
-            f"[concata]aformat=sample_rates={sr}:channel_layouts=stereo[voice]"
-        )
-        filters.append(
-            f"[{music_input_idx}:a]atrim=0:{plan.total_duration:.3f},"
-            f"asetpts=PTS-STARTPTS,"
-            f"volume={MUSIC_VOLUME},"
-            f"afade=t=in:st=0:d=1.0,"
-            f"afade=t=out:st={fade_start:.3f}:d=1.0,"
-            f"aformat=sample_rates={sr}:channel_layouts=stereo[bgmusic]"
-        )
-        filters.append(
-            "[voice][bgmusic]amix=inputs=2:duration=first:dropout_transition=2,"
-            "loudnorm=I=-14:TP=-1:LRA=11[outa]"
-        )
+    # --- Audio output ---
+    filters.append(
+        f"[concata]aformat=sample_rates={sr}:channel_layouts=stereo,"
+        "loudnorm=I=-14:TP=-1:LRA=11[outa]"
+    )
 
     filter_complex = ";\n".join(filters)
 
@@ -304,20 +267,19 @@ def build_ffmpeg_command(
 def assemble_reel(
     plan: EditingPlan,
     videos: list[VideoInfo],
-    music_path: str,
     output_path: str,
-    audio_mode: str = "both",
+    audio_mode: str = "voice",
 ) -> str:
     """Assemble the final reel using FFmpeg."""
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
-    cmd = build_ffmpeg_command(plan, videos, music_path, output_path, audio_mode=audio_mode)
+    cmd = build_ffmpeg_command(plan, videos, output_path, audio_mode=audio_mode)
 
     kept = sum(1 for c in plan.clips if c.audio == "keep_audio")
     muted = len(plan.clips) - kept
-    audio_desc = {"both": "voice + background music", "music": "music only", "voice": "voice only", "original": "original audio"}
+    audio_desc = {"voice": "voice only", "original": "original audio"}
     log.info("  Running FFmpeg (%d clips, %d overlays)...", len(plan.clips), len(plan.text_overlays))
-    log.info("  Audio: %s (%d keep, %d muted)", audio_desc[audio_mode], kept, muted)
+    log.info("  Audio: %s (%d keep, %d muted)", audio_desc.get(audio_mode, audio_mode), kept, muted)
     log.info("  Video: crop-to-fill %dx%d (no black bars)", OUTPUT_WIDTH, OUTPUT_HEIGHT)
 
     result = subprocess.run(cmd, capture_output=True, text=True)

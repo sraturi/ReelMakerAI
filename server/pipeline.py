@@ -4,15 +4,11 @@ import logging
 import time
 from collections import defaultdict
 
-from beat_detection import beats_from_bpm, detect_beats
-from config import MUSIC_DIR, OUTPUT_DIR
+from beat_detection import beats_from_bpm
+from config import OUTPUT_DIR
 from ffmpeg_service import assemble_reel, probe_video
-from gemini_service import (
-    analyze_videos_and_create_plan,
-    load_music_catalog,
-    pick_music_track,
-)
-from models import ClipPlan, EditingPlan, MusicTrack, VideoInfo
+from gemini_service import analyze_videos_and_create_plan
+from models import EditingPlan, MusicTrack, VideoInfo
 
 log = logging.getLogger(__name__)
 
@@ -125,55 +121,39 @@ def run_pipeline(
     prompt: str,
     target_duration: int | None = None,
     captions: bool = True,
-    audio_mode: str = "both",
-    bpm: int | None = None,
+    audio_mode: str = "voice",
+    bpm: int = 120,
     reel_style: str = "montage",
     reel_approach: str = "hook",
 ) -> str:
     """
     Run the full reel-making pipeline:
     1. Probe videos with FFmpeg
-    2. Pick music track via Gemini (or use BPM)
-    3. Detect beats in the music (or generate from BPM)
-    4. Analyze videos + create editing plan via Gemini (2-pass)
-    5. Assemble: original audio (voices) + light background music + text overlays
+    2. Generate beats from BPM
+    3. Analyze videos + create editing plan via Gemini (2-pass)
+    4. Assemble: video + audio + text overlays
     """
     start_time = time.time()
 
     # --- Step 1: Probe videos ---
-    log.info("\n[1/5] Probing videos...")
+    log.info("\n[1/4] Probing videos...")
     videos: list[VideoInfo] = []
     for vpath in video_paths:
         info = probe_video(vpath)
         videos.append(info)
         log.info("  %s: %.1fs, %dx%d", info.filename, info.duration, info.width, info.height)
 
-    if bpm:
-        # BPM mode: generate beats from BPM, skip music selection
-        duration = float(target_duration) if target_duration else 30.0
+    # --- Step 2: Generate beats from BPM ---
+    duration = float(target_duration) if target_duration else 30.0
+    log.info("\n[2/4] Generating beats at %d BPM...", bpm)
+    track = MusicTrack(
+        filename="", name=f"Custom {bpm} BPM", genre="",
+        vibe="custom", bpm=bpm, duration=duration,
+    )
+    beat_times = beats_from_bpm(bpm, duration)
 
-        log.info("\n[2/5] Using %d BPM for beat timing (skipping music selection)...", bpm)
-        track = MusicTrack(
-            filename="", name=f"Custom {bpm} BPM", genre="",
-            vibe="custom", bpm=bpm, duration=duration,
-        )
-        music_path = ""
-
-        log.info("\n[3/5] Generating beats at %d BPM...", bpm)
-        beat_times = beats_from_bpm(bpm, duration)
-    else:
-        # Normal mode: pick music track + detect beats from audio
-        log.info("\n[2/5] Selecting music track...")
-        catalog = load_music_catalog()
-        track = pick_music_track(prompt, catalog)
-        music_path = str(MUSIC_DIR / track.filename)
-        log.info("  Selected: %s (%s, %d BPM)", track.name, track.vibe, track.bpm)
-
-        log.info("\n[3/5] Detecting beats in music...")
-        beat_times = detect_beats(music_path)
-
-    # --- Step 4: Analyze videos + create editing plan (Gemini 2-pass) ---
-    log.info("\n[4/5] Analyzing videos and creating editing plan (2-pass)...")
+    # --- Step 3: Analyze videos + create editing plan (Gemini 2-pass) ---
+    log.info("\n[3/4] Analyzing videos and creating editing plan (2-pass)...")
     plan: EditingPlan = analyze_videos_and_create_plan(
         videos=videos,
         prompt=prompt,
@@ -212,12 +192,12 @@ def run_pipeline(
     log.info("  Duration: %.1fs", plan.total_duration)
     log.info("  Approach: %s", plan.description)
 
-    # --- Step 5: Assemble with FFmpeg ---
-    log.info("\n[5/5] Assembling reel (original audio + background music)...")
+    # --- Step 4: Assemble with FFmpeg ---
+    log.info("\n[4/4] Assembling reel...")
     timestamp = int(time.time())
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     output_path = str(OUTPUT_DIR / f"reel_{timestamp}.mp4")
-    result_path = assemble_reel(plan, videos, music_path, output_path, audio_mode=audio_mode)
+    result_path = assemble_reel(plan, videos, output_path, audio_mode=audio_mode)
 
     elapsed = time.time() - start_time
     log.info("\n\u2713 Done in %.1fs \u2192 %s", elapsed, result_path)

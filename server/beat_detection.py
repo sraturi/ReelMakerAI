@@ -1,9 +1,6 @@
-"""Beat detection using librosa."""
+"""Beat generation from BPM."""
 
 import logging
-from pathlib import Path
-
-import librosa
 
 from config import MIN_BEAT_INTERVAL
 
@@ -19,31 +16,6 @@ def _thin_beats(all_beats: list[float], min_interval: float) -> list[float]:
         if b - thinned[-1] >= min_interval:
             thinned.append(b)
     return thinned
-
-
-def detect_beats(music_path: str, min_interval: float = MIN_BEAT_INTERVAL) -> list[float]:
-    """
-    Detect beat timestamps in a music file using librosa.
-
-    min_interval: minimum seconds between cuts. At 128 BPM raw beats
-    are ~0.47s apart which is way too fast. Default 1.5s means cuts
-    land on every 3rd-4th beat, giving a natural rhythm without
-    overwhelming the viewer.
-    """
-    music_path = str(Path(music_path).resolve())
-    y, sr = librosa.load(music_path, sr=22050, mono=True)
-
-    _tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
-    beat_times = librosa.frames_to_time(beat_frames, sr=sr)
-    all_beats = [round(float(t), 3) for t in beat_times]
-
-    beats = _thin_beats(all_beats, min_interval)
-
-    log.info(
-        "  Detected %d raw beats, using %d cut points (min %.1fs apart)",
-        len(all_beats), len(beats), min_interval,
-    )
-    return beats
 
 
 def beats_from_bpm(bpm: int, duration: float, min_interval: float = MIN_BEAT_INTERVAL) -> list[float]:

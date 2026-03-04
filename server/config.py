@@ -10,7 +10,6 @@ load_dotenv()
 
 # --- Paths ---
 BASE_DIR = Path(__file__).parent
-MUSIC_DIR = BASE_DIR / "music"
 OUTPUT_DIR = BASE_DIR / "output"
 
 # Font path (platform-aware)
@@ -34,7 +33,6 @@ OUTPUT_WIDTH = 1080
 OUTPUT_HEIGHT = 1920
 
 # --- Audio ---
-MUSIC_VOLUME = 0.15
 AUDIO_SAMPLE_RATE = 44100
 
 # --- Beat detection ---

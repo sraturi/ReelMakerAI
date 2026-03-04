@@ -92,37 +92,34 @@ Examples:
     captions = _choose("Add captions?", [("yes", "Yes"), ("no", "No")]) == "yes"
 
     audio_mode = _choose("Audio mode?", [
-        ("both", "Voice + Music"),
-        ("music", "Music only"),
         ("voice", "Voice only (smart — mutes ambient clips)"),
         ("original", "Original audio (keeps all clip audio as-is)"),
     ])
 
-    # BPM prompt — for modes without background music
-    bpm = None
-    if audio_mode in ("voice", "original"):
-        bpm_options = [90, 100, 110, 120, 128, 140]
-        print("\nSong BPM? (match the song you'll add on Instagram)")
-        for i, b in enumerate(bpm_options, 1):
-            print(f"  {i}) {b} BPM")
-        print(f"  {len(bpm_options) + 1}) Custom")
-        while True:
-            bpm_choice = input(f"Choice [1-{len(bpm_options) + 1}]: ").strip()
-            if bpm_choice.isdigit():
-                idx = int(bpm_choice)
-                if 1 <= idx <= len(bpm_options):
-                    bpm = bpm_options[idx - 1]
+    # BPM prompt — match the song you'll add later on Instagram
+    bpm_options = [90, 100, 110, 120, 128, 140]
+    print("\nSong BPM? (match the song you'll add on Instagram)")
+    for i, b in enumerate(bpm_options, 1):
+        print(f"  {i}) {b} BPM")
+    print(f"  {len(bpm_options) + 1}) Custom")
+    bpm = 120  # default
+    while True:
+        bpm_choice = input(f"Choice [1-{len(bpm_options) + 1}]: ").strip()
+        if bpm_choice.isdigit():
+            idx = int(bpm_choice)
+            if 1 <= idx <= len(bpm_options):
+                bpm = bpm_options[idx - 1]
+                break
+            elif idx == len(bpm_options) + 1:
+                custom = input("  Enter BPM (60-200): ").strip()
+                if custom.isdigit() and 60 <= int(custom) <= 200:
+                    bpm = int(custom)
                     break
-                elif idx == len(bpm_options) + 1:
-                    custom = input("  Enter BPM (60-200): ").strip()
-                    if custom.isdigit() and 60 <= int(custom) <= 200:
-                        bpm = int(custom)
-                        break
-                    print("  Invalid BPM, try again.")
-                else:
-                    print("  Invalid choice, try again.")
+                print("  Invalid BPM, try again.")
             else:
                 print("  Invalid choice, try again.")
+        else:
+            print("  Invalid choice, try again.")
 
     # Summary
     style_labels = dict([
@@ -131,7 +128,7 @@ Examples:
         ("aesthetic", "Aesthetic / Cinematic"), ("promo", "Promo / Business"),
     ])
     approach_labels = {"hook": "Hook-first", "story": "Story"}
-    audio_labels = {"both": "Voice + Music", "music": "Music only", "voice": "Voice only (smart)", "original": "Original audio"}
+    audio_labels = {"voice": "Voice only (smart)", "original": "Original audio"}
 
     print("=" * 50)
     print("  ReelMaker AI")
@@ -145,8 +142,7 @@ Examples:
     print(f"  Duration: {target_duration}s")
     print(f"  Captions: {'Yes' if captions else 'No'}")
     print(f"  Audio: {audio_labels[audio_mode]}")
-    if bpm:
-        print(f"  BPM: {bpm}")
+    print(f"  BPM: {bpm}")
     print("=" * 50)
 
     from pipeline import run_pipeline
