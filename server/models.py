@@ -31,6 +31,14 @@ class ClipPlan(BaseModel):
         default="keep_audio",
         description="Audio mode: keep_audio (speech/dialogue) or mute (ambient/noise)"
     )
+    transition: str = Field(
+        default="fade",
+        description="xfade transition type INTO this clip (e.g. fade, wipeleft, dissolve)"
+    )
+    ken_burns: str = Field(
+        default="none",
+        description="Ken Burns effect on this clip: none, zoom_in, zoom_out, pan_left, pan_right"
+    )
 
 
 class SceneInfo(BaseModel):

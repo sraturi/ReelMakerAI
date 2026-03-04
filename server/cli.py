@@ -78,7 +78,7 @@ Examples:
         ("story", "Story (chronological narrative, build to climax)"),
     ])
 
-    duration_options = [10, 15, 20, 30]
+    duration_options = [10, 15, 20, 30, 40, 45]
     print("\nSelect reel length:")
     for i, d in enumerate(duration_options, 1):
         print(f"  {i}) {d} seconds")
@@ -94,6 +94,19 @@ Examples:
     audio_mode = _choose("Audio mode?", [
         ("voice", "Voice only (smart — mutes ambient clips)"),
         ("original", "Original audio (keeps all clip audio as-is)"),
+    ])
+
+    transition_style = _choose("Transition style?", [
+        ("auto", "Auto (AI picks per clip)"),
+        ("smooth", "Smooth (fade, dissolve, fadeblack)"),
+        ("dynamic", "Dynamic (wipes, slides)"),
+        ("dramatic", "Dramatic (circle open, radial)"),
+        ("cut", "Hard cut (no transitions)"),
+    ])
+
+    gemini_model = _choose("Gemini model?", [
+        ("gemini-2.5-flash", "Gemini 2.5 Flash (fast, cheaper)"),
+        ("gemini-2.5-pro", "Gemini 2.5 Pro (smarter, slower)"),
     ])
 
     # BPM prompt — match the song you'll add later on Instagram
@@ -143,7 +156,13 @@ Examples:
     print(f"  Captions: {'Yes' if captions else 'No'}")
     print(f"  Audio: {audio_labels[audio_mode]}")
     print(f"  BPM: {bpm}")
+    transition_labels = {"auto": "Auto", "smooth": "Smooth", "dynamic": "Dynamic", "dramatic": "Dramatic", "cut": "Hard cut"}
+    print(f"  Transitions: {transition_labels[transition_style]}")
+    print(f"  Model: {gemini_model}")
     print("=" * 50)
+
+    import config
+    config.GEMINI_MODEL = gemini_model
 
     from pipeline import run_pipeline
 
@@ -156,12 +175,13 @@ Examples:
             bpm=bpm,
             reel_style=reel_style,
             reel_approach=reel_approach,
+            transition_style=transition_style,
         )
         print(f"\n{'=' * 50}")
         print(f"  Output: {output}")
         print(f"{'=' * 50}")
     except Exception as e:
-        logging.getLogger(__name__).error("Pipeline failed: %s", e)
+        logging.getLogger(__name__).error("Pipeline failed: %s", e, exc_info=True)
         sys.exit(1)
 
 

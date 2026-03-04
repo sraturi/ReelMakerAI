@@ -5,8 +5,17 @@ import logging
 import subprocess
 from pathlib import Path
 
-from config import AUDIO_SAMPLE_RATE, FONT_PATH, OUTPUT_HEIGHT, OUTPUT_WIDTH
-from models import EditingPlan, VideoInfo
+from config import (
+    ALLOWED_KENBURNS,
+    ALLOWED_TRANSITIONS,
+    AUDIO_SAMPLE_RATE,
+    FONT_PATH,
+    KENBURNS_SCALE,
+    OUTPUT_HEIGHT,
+    OUTPUT_WIDTH,
+    TRANSITION_DURATION,
+)
+from models import ClipPlan, EditingPlan, VideoInfo
 
 log = logging.getLogger(__name__)
 
@@ -136,11 +145,78 @@ def _build_drawtext_filter(
     )
 
 
+def _build_kenburns_filter(
+    clip: ClipPlan,
+    input_label: str,
+    output_label: str,
+) -> list[str]:
+    """
+    Build filter chain for Ken Burns zoom/pan effect on a single clip.
+
+    Returns a list of filter strings that transform [input_label] -> [output_label].
+    For 'none', returns a simple scale/crop chain (same as default).
+    For zoom/pan effects, scales to overscan size then applies zoompan.
+    """
+    kb = clip.ken_burns
+    if kb not in ALLOWED_KENBURNS or kb == "none":
+        # Standard scale + crop (no Ken Burns)
+        # fps=30 ensures consistent timebase across all clips for xfade
+        return [
+            f"[{input_label}]scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:"
+            f"force_original_aspect_ratio=increase,"
+            f"crop={OUTPUT_WIDTH}:{OUTPUT_HEIGHT},"
+            f"setsar=1,fps=30[{output_label}]"
+        ]
+
+    # Overscan dimensions for zoompan room
+    os_w = int(OUTPUT_WIDTH * KENBURNS_SCALE)
+    os_h = int(OUTPUT_HEIGHT * KENBURNS_SCALE)
+
+    clip_dur = clip.end_time - clip.start_time
+    n_frames = max(int(clip_dur * 30), 1)
+
+    # Build zoompan expression based on effect type
+    if kb == "zoom_in":
+        zp = (
+            f"zoompan=z='min(1+0.15*on/{n_frames},1.15)':"
+            f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+            f"d=1:s={OUTPUT_WIDTH}x{OUTPUT_HEIGHT}:fps=30"
+        )
+    elif kb == "zoom_out":
+        zp = (
+            f"zoompan=z='if(eq(on,0),1.15,max(1.15-0.15*on/{n_frames},1.0))':"
+            f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+            f"d=1:s={OUTPUT_WIDTH}x{OUTPUT_HEIGHT}:fps=30"
+        )
+    elif kb == "pan_right":
+        zp = (
+            f"zoompan=z=1.1:"
+            f"x='iw*(1-1/1.1)*on/{n_frames}':y='ih/2-(ih/zoom/2)':"
+            f"d=1:s={OUTPUT_WIDTH}x{OUTPUT_HEIGHT}:fps=30"
+        )
+    else:  # pan_left
+        zp = (
+            f"zoompan=z=1.1:"
+            f"x='iw*(1-1/1.1)*(1-on/{n_frames})':y='ih/2-(ih/zoom/2)':"
+            f"d=1:s={OUTPUT_WIDTH}x{OUTPUT_HEIGHT}:fps=30"
+        )
+
+    return [
+        f"[{input_label}]scale={os_w}:{os_h}:"
+        f"force_original_aspect_ratio=increase,"
+        f"crop={os_w}:{os_h},"
+        f"setsar=1,"
+        f"fps=30,"
+        f"{zp}[{output_label}]"
+    ]
+
+
 def build_ffmpeg_command(
     plan: EditingPlan,
     videos: list[VideoInfo],
     output_path: str,
     audio_mode: str = "voice",
+    transition_style: str = "auto",
 ) -> list[str]:
     """
     Build an FFmpeg command that:
@@ -178,13 +254,8 @@ def build_ffmpeg_command(
             f"setpts=PTS-STARTPTS[{v_clip}]"
         )
 
-        # Scale to cover and center-crop to portrait (no black bars)
-        filters.append(
-            f"[{v_clip}]scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:"
-            f"force_original_aspect_ratio=increase,"
-            f"crop={OUTPUT_WIDTH}:{OUTPUT_HEIGHT},"
-            f"setsar=1[{v_scaled}]"
-        )
+        # Scale/crop with optional Ken Burns effect
+        filters.extend(_build_kenburns_filter(clip, v_clip, v_scaled))
 
         # Per-clip audio
         # "original" keeps all audio; "voice" respects Gemini mute flags
@@ -203,24 +274,50 @@ def build_ffmpeg_command(
 
         video_concat_inputs.append(f"[{v_scaled}]")
 
-    # Concatenate video
+    # Join video clips (xfade transitions or hard concat)
     n_clips = len(plan.clips)
-    filters.append(
-        f"{''.join(video_concat_inputs)}concat=n={n_clips}:v=1:a=0[concatv]"
-    )
+    T = TRANSITION_DURATION
+    use_xfade = transition_style != "cut" and n_clips > 1
+    clip_durations = [c.end_time - c.start_time for c in plan.clips]
 
-    # Crossfade audio clips
+    if n_clips == 1:
+        lbl = video_concat_inputs[0].strip("[]")
+        filters.append(f"[{lbl}]null[concatv]")
+    elif use_xfade:
+        prev = video_concat_inputs[0].strip("[]")
+        for k in range(1, n_clips):
+            cur = video_concat_inputs[k].strip("[]")
+            out_label = "concatv" if k == n_clips - 1 else f"xf{k}"
+            offset = sum(clip_durations[:k]) - k * T
+            # Use per-clip transition type (validated against allowed list)
+            tr = getattr(plan.clips[k], "transition", "fade")
+            if tr not in ALLOWED_TRANSITIONS:
+                tr = "fade"
+            filters.append(
+                f"[{prev}][{cur}]xfade=transition={tr}:duration={T}:offset={offset:.3f}[{out_label}]"
+            )
+            prev = out_label
+    else:
+        # Hard cut — simple concat, no crossfade
+        all_v = "".join(video_concat_inputs)
+        filters.append(f"{all_v}concat=n={n_clips}:v=1:a=0[concatv]")
+
+    # Join audio clips
     if n_clips == 1:
         filters.append(f"{audio_concat_inputs[0]}anull[concata]")
-    else:
+    elif use_xfade:
         prev = audio_concat_inputs[0].strip("[]")
         for k in range(1, n_clips):
             cur = audio_concat_inputs[k].strip("[]")
             out_label = "concata" if k == n_clips - 1 else f"axf{k}"
             filters.append(
-                f"[{prev}][{cur}]acrossfade=d=0.3:c1=tri:c2=tri[{out_label}]"
+                f"[{prev}][{cur}]acrossfade=d={T}:c1=tri:c2=tri[{out_label}]"
             )
             prev = out_label
+    else:
+        # Hard cut — simple concat audio
+        all_a = "".join(audio_concat_inputs)
+        filters.append(f"{all_a}concat=n={n_clips}:v=0:a=1[concata]")
 
     # Text overlays
     current_video = "concatv"
@@ -269,11 +366,13 @@ def assemble_reel(
     videos: list[VideoInfo],
     output_path: str,
     audio_mode: str = "voice",
+    transition_style: str = "auto",
 ) -> str:
     """Assemble the final reel using FFmpeg."""
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
-    cmd = build_ffmpeg_command(plan, videos, output_path, audio_mode=audio_mode)
+    cmd = build_ffmpeg_command(plan, videos, output_path, audio_mode=audio_mode,
+                               transition_style=transition_style)
 
     kept = sum(1 for c in plan.clips if c.audio == "keep_audio")
     muted = len(plan.clips) - kept

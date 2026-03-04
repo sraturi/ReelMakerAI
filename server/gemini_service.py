@@ -9,6 +9,8 @@ from google import genai
 from google.genai import types
 
 from config import (
+    ALLOWED_KENBURNS,
+    ALLOWED_TRANSITIONS,
     GEMINI_API_KEY,
     GEMINI_MODEL,
     MAX_RETRIES,
@@ -81,7 +83,7 @@ STYLE_GUIDES = {
     "travel": (
         "STYLE: Travel / Adventure\n"
         "Goal: Excite and inspire wanderlust\n"
-        "Reel Length: 10-30 sec | Clip Count: 3-5\n\n"
+        "Reel Length: 10-30 sec | Clip Count: 4-10 (use more clips for longer reels)\n\n"
         "REEL STRUCTURE (follow this order):\n"
         "1. HOOK (1-3 sec) \u2014 Best scenery or action shot\n"
         "2. JOURNEY / BUILD (2-7 sec) \u2014 POV, walking, drone, or travel transitions\n"
@@ -96,7 +98,7 @@ STYLE_GUIDES = {
     "vlog": (
         "STYLE: Mini Vlog\n"
         "Goal: Tell a quick story or daily moment\n"
-        "Reel Length: 10-30 sec | Clip Count: 3-5\n\n"
+        "Reel Length: 10-30 sec | Clip Count: 4-10 (use more clips for longer reels)\n\n"
         "REEL STRUCTURE (follow this order):\n"
         "1. HOOK (1-3 sec) \u2014 Funny, relatable, or intriguing moment\n"
         "2. CONTEXT / BUILD (2-8 sec) \u2014 Short clips showing environment or setup\n"
@@ -110,23 +112,25 @@ STYLE_GUIDES = {
     ),
     "tutorial": (
         "STYLE: Tutorial / How-To\n"
-        "Goal: Show a step or result clearly\n"
-        "Reel Length: 10-30 sec | Clip Count: 3-5\n\n"
+        "Goal: Show the process AND the final result clearly\n"
+        "Reel Length: 10-45 sec | Clip Count: 4-10 (use more clips for longer reels)\n\n"
         "REEL STRUCTURE (follow this order):\n"
         "1. HOOK / PROBLEM (1-3 sec) \u2014 Show what you're solving or teaching\n"
         "2. STEP 1 (2-6 sec) \u2014 Visual of first step\n"
-        "3. STEP 2 (2-6 sec) \u2014 Next key step\n"
-        "4. RESULT / BEFORE-AFTER (2-5 sec) \u2014 Quick payoff or final tip\n\n"
-        "TIP: Keep each step visually distinct. Add short captions for clarity.\n\n"
+        "3. STEP 2+ (2-6 sec each) \u2014 Continue through the process steps\n"
+        "4. FINAL RESULT / REVEAL (3-8 sec) \u2014 MUST show the finished product!\n"
+        "   The last videos (highest numbered) usually contain the final result \u2014 ALWAYS use them.\n"
+        "   Give the reveal enough screen time (3-8 sec) so the viewer sees the payoff.\n\n"
+        "TIP: Keep each step visually distinct. The final reveal is the most important part \u2014 never skip it.\n\n"
         "CAPTIONS (3-5, instructional):\n"
         "- Use 'title' for: what you're making/doing (e.g. 'Glass Skin in 3 Steps')\n"
         "- Use 'caption' for: step instructions (e.g. 'Step 1: Apply primer evenly')\n"
-        "- Use 'highlight' for: pro tips (e.g. 'Game changer!', 'Don't skip this')"
+        "- Use 'highlight' for: pro tips or the reveal (e.g. 'Game changer!', 'The final look')"
     ),
     "montage": (
         "STYLE: Montage / Highlight\n"
         "Goal: Energize with fast, punchy edits\n"
-        "Reel Length: 10-30 sec | Clip Count: 3-5 (can split into micro clips)\n\n"
+        "Reel Length: 10-30 sec | Clip Count: 4-10 (use more clips for longer reels, can split into micro clips)\n\n"
         "REEL STRUCTURE (follow this order):\n"
         "1. HOOK / IMPACT (1-2 sec) \u2014 Most visually striking moment\n"
         "2. RAPID HIGHLIGHTS (5-15 sec) \u2014 Cut shots in 1-2 sec increments, synced with beat\n"
@@ -141,7 +145,7 @@ STYLE_GUIDES = {
     "aesthetic": (
         "STYLE: Aesthetic / Cinematic\n"
         "Goal: Slow, emotional, visually pleasing\n"
-        "Reel Length: 10-30 sec | Clip Count: 3-5\n\n"
+        "Reel Length: 10-30 sec | Clip Count: 4-10 (use more clips for longer reels)\n\n"
         "REEL STRUCTURE (follow this order):\n"
         "1. OPENING / MOOD (2-4 sec) \u2014 Wide or establishing shot\n"
         "2. MIDDLE / FLOW (3-8 sec) \u2014 Medium shots with movement, subtle zooms, or transitions\n"
@@ -156,7 +160,7 @@ STYLE_GUIDES = {
     "promo": (
         "STYLE: Promo / Business\n"
         "Goal: Clear, persuasive message\n"
-        "Reel Length: 10-30 sec | Clip Count: 3-5\n\n"
+        "Reel Length: 10-30 sec | Clip Count: 4-10 (use more clips for longer reels)\n\n"
         "REEL STRUCTURE (follow this order):\n"
         "1. HOOK (1-3 sec) \u2014 Eye-catching statement or benefit\n"
         "2. FEATURE / VALUE (2-8 sec) \u2014 Show product/service in action\n"
@@ -318,69 +322,98 @@ def create_editing_plan_from_scenes(
     else:
         beat_summary = f"{beat_count} beats"
 
+    # Build per-video duration limits for the prompt
+    total_footage = sum(v.duration for v in videos)
+    video_limits = "\n".join(
+        f"  Video {i} ({v.filename}): max {v.duration:.1f}s \u2014 start_time must be < {v.duration:.1f}, end_time must be \u2264 {v.duration:.1f}"
+        for i, v in enumerate(videos)
+    )
+
     edit_prompt = f"""You are an expert short-form video editor (Instagram Reels / TikTok).
 
-USER WANTS: {prompt}
+PRIMARY GOAL \u2014 this is your #1 priority, every clip must serve this:
+{prompt}
+
+Every clip you choose MUST clearly relate to the goal above. If a clip doesn't help
+tell the story the user asked for, do NOT include it \u2014 no matter how "interesting" it looks.
 
 {style_guide}
 
 {approach_guide}
 
+VIDEO ORDERING:
+Videos are listed in recording order (filenames are sequential). Video 0 was recorded FIRST,
+the last video was recorded LAST. This is the real-world chronological order \u2014 use it to
+build a natural narrative (e.g. setup \u2192 process \u2192 result).
+
+HARD LIMITS \u2014 do NOT use timestamps beyond these:
+{video_limits}
+Total available footage: {total_footage:.1f}s
+
 SCENE ANALYSIS (from video review):
 {scene_menu}
 
 TIMING:
-- Target duration: {target_duration:.1f}s
+- Target duration: {target_duration:.1f}s (aim to fill this, but never exceed a video's actual duration)
 - Beat timestamps (seconds): {beat_times_str}
 - Summary: {beat_summary}
 - Output: 1080x1920 portrait
 
-YOUR JOB \u2014 use the scene analysis above to build the best possible reel:
+YOUR JOB \u2014 build a reel that fulfills the PRIMARY GOAL above:
 
-1. SELECT SCENES \u2014 STRONGLY PREFER scenes rated 4-5. Avoid scenes rated 1-2.
-   ALWAYS include scenes marked *** PEAK MOMENT *** \u2014 these are the highlights.
-   If you skip a 5-rated scene, reconsider \u2014 it's probably worth including.
+1. SELECT SCENES \u2014 Choose scenes that best serve the PRIMARY GOAL.
+   - Prefer scenes rated 4-5, but INCLUDE lower-rated scenes if they show key content
+     (e.g. a process step, a technique, a person speaking) that the goal requires.
+   - ALWAYS include scenes marked *** PEAK MOMENT ***.
+   - A 3-rated scene showing the main subject IS better than a 5-rated scene of something unrelated.
 
 2. PICK YOUR OPENING \u2014 follow the APPROACH guide above:
-   - If "Hook-first": the first clip must be the single most compelling moment (highest rated). Stop the scroll.
-   - If "Story": the first clip should SET THE SCENE \u2014 an arrival, establishing shot, or starting point. Save the best moment for the climax later.
+   - If "Hook-first": open with the most compelling moment that matches the PRIMARY GOAL.
+   - If "Story": open with a scene-setter that introduces the subject/topic.
 
-3. ARRANGE CLIPS following the REEL STRUCTURE from the style guide and APPROACH above.
-   - CRITICAL: When including a peak moment, make sure the clip CONTAINS the peak \u2014 start 1-2s before the peak timestamp so the viewer sees the buildup AND the payoff.
-   - Align clip transitions to the nearest beat timestamp when possible
-   - Beats are a GUIDE, not a prison \u2014 shift up to 0.5s off-beat to capture a better moment
-   - Content quality > beat precision
-   - Use the clip lengths recommended in the style guide
-   - Use different time ranges from each video \u2014 never repeat the same footage
-   - Use multiple source videos \u2014 distribute clips across them
-   - CHRONOLOGICAL RULE: if you use the same video twice, the second clip must be from LATER in the video than the first.
+3. ARRANGE CLIPS following the REEL STRUCTURE from the style guide.
+   - The reel should feel like a coherent story about the PRIMARY GOAL, not a random highlight reel.
+   - FOLLOW THE RECORDING ORDER: videos are sequential, so prefer Video 0 \u2192 Video 1 \u2192 Video 2 etc.
+     This naturally builds a narrative (e.g. start of makeup \u2192 mid-process \u2192 final look).
+     Exception: "Hook-first" approach may pull the best moment to the front, then resume sequential order.
+   - When including a peak moment, start 1-2s before so the viewer sees buildup AND payoff.
+   - Align clip transitions to beat timestamps when possible (but content > beat precision).
+   - Use different time ranges \u2014 never repeat the same footage.
+   - Spread across source videos when possible, but don't force it \u2014 if the best content for the goal is in one video, use that video more.
 
-4. ADD CAPTIONS following the style guide's caption examples above.
-   - Match the tone and style shown in the examples
-   - Use the recommended overlay styles (title/caption/highlight) as described
-   - Each overlay must have a "style" field: "title", "caption", or "highlight"
-     - "title": big bold centered text \u2014 for hooks/headlines (position: center)
-     - "caption": smaller text with dark background \u2014 for context (position: bottom)
-     - "highlight": black text on yellow box \u2014 for callouts/CTAs (position: center or top)
-   - Time overlays to appear/disappear near beat timestamps
+4. ADD CAPTIONS following the style guide's examples.
+   - Each overlay needs a "style": "title", "caption", or "highlight"
+     - "title": big bold centered text \u2014 hooks/headlines (position: center)
+     - "caption": smaller text with dark background \u2014 context (position: bottom)
+     - "highlight": black text on yellow box \u2014 callouts/CTAs (position: center or top)
+   - Time overlays to appear/disappear near beat timestamps.
 
-5. SET AUDIO per clip: "keep_audio" if the scene has speech (marked [SPEECH]), "mute" otherwise.
+5. SET AUDIO per clip: "keep_audio" if [SPEECH] is present, "mute" otherwise.
 
-6. REVIEW YOUR EDIT \u2014 before returning, check:
-   - Did you include all *** PEAK MOMENT *** scenes? If not, reconsider.
-   - Does every clip add something new? Replace duplicates with fresh moments.
-   - Does it drag anywhere? Shorten or swap for higher-energy content.
+6. PER-CLIP EFFECTS (secondary \u2014 pick quickly, don't overthink):
+   - "transition": visual transition INTO this clip. Values: {', '.join(ALLOWED_TRANSITIONS)}
+     Fast cuts \u2192 wipeleft/slideup. Smooth \u2192 fade/dissolve. Reveals \u2192 circleopen/radial. First clip: "fade".
+   - "ken_burns": subtle zoom/pan. Values: {', '.join(ALLOWED_KENBURNS)}
+     Static/wide shots \u2192 zoom_in/pan_right. Reveals \u2192 zoom_out. Action/speech \u2192 none.
+
+7. REVIEW \u2014 before returning, check:
+   - Does every clip serve the PRIMARY GOAL? Remove any that don't and replace with on-topic content.
+   - Did you include *** PEAK MOMENT *** scenes?
+   - Does the reel tell a coherent story or does it feel like random clips?
 
 CONSTRAINTS:
-- Total duration must not exceed {target_duration:.1f}s
+- DURATION: {target_duration:.1f}s is the MINIMUM. You may go up to {target_duration * 1.25:.1f}s.
+  Aim for {target_duration:.1f}s\u2013{target_duration * 1.25:.1f}s total. Use as much good footage as possible.
+  If your clips add up to less than {target_duration:.1f}s, add more clips or use longer clips.
+  BUT never invent timestamps \u2014 only use times within each video's actual duration (see HARD LIMITS above).
+  If there isn't enough footage, use what's available \u2014 a shorter reel is better than invalid timestamps.
 - Each clip must be at least 1.5s long
 - Don't exceed any video's actual duration
 - Use different segments \u2014 no repeated footage
 
-CRITICAL \u2014 CLIP ORDERING:
-The clips array is the PLAYBACK ORDER. clips[0] plays FIRST (the viewer sees it first).
-The last clip in the array plays LAST. Order the array to match your intended reel structure.
-Set timeline_start sequentially: 0.0 for the first clip, then previous clip's timeline_start + its duration, etc.
+CLIP ORDERING:
+clips[0] plays FIRST. Last clip plays LAST. Set timeline_start sequentially:
+0.0 for first clip, then previous clip's timeline_start + its duration, etc.
 
 Return ONLY valid JSON:
 {{
@@ -394,7 +427,9 @@ Return ONLY valid JSON:
       "start_time": <number>,
       "end_time": <number>,
       "timeline_start": <number>,
-      "audio": "keep_audio|mute"
+      "audio": "keep_audio|mute",
+      "transition": "fade|fadeblack|dissolve|wipeleft|wiperight|slideup|slideleft|circleopen|radial",
+      "ken_burns": "none|zoom_in|zoom_out|pan_left|pan_right"
     }}
   ],
   "text_overlays": [

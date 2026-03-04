@@ -5,7 +5,7 @@ import time
 from collections import defaultdict
 
 from beat_detection import beats_from_bpm
-from config import OUTPUT_DIR
+from config import ALLOWED_KENBURNS, ALLOWED_TRANSITIONS, OUTPUT_DIR, TRANSITION_DURATION, TRANSITION_STYLES
 from ffmpeg_service import assemble_reel, probe_video
 from gemini_service import analyze_videos_and_create_plan
 from models import EditingPlan, MusicTrack, VideoInfo
@@ -125,6 +125,7 @@ def run_pipeline(
     bpm: int = 120,
     reel_style: str = "montage",
     reel_approach: str = "hook",
+    transition_style: str = "auto",
 ) -> str:
     """
     Run the full reel-making pipeline:
@@ -167,15 +168,61 @@ def run_pipeline(
     # Sort clips by timeline_start and recalculate sequential timing
     plan.clips.sort(key=lambda c: c.timeline_start)
 
+    # Validate and sanitize all clip fields
+    valid_clips = []
+    for clip in plan.clips:
+        # Drop clips with invalid source index
+        if clip.source_index < 0 or clip.source_index >= len(videos):
+            log.warning("  Dropping clip: invalid source_index %d (have %d videos)",
+                        clip.source_index, len(videos))
+            continue
+
+        vid_dur = videos[clip.source_index].duration
+
+        # Fix swapped start/end
+        if clip.start_time > clip.end_time:
+            clip.start_time, clip.end_time = clip.end_time, clip.start_time
+
+        # Clamp times to actual video duration
+        clip.start_time = max(0.0, min(clip.start_time, vid_dur - 0.1))
+        clip.end_time = max(clip.start_time + 0.5, min(clip.end_time, vid_dur))
+
+        # Drop clips that are too short after clamping
+        if clip.end_time - clip.start_time < 0.5:
+            log.warning("  Dropping clip: too short after clamping (src=%d, %.1f-%.1f, video=%.1fs)",
+                        clip.source_index, clip.start_time, clip.end_time, vid_dur)
+            continue
+
+        if clip.ken_burns not in ALLOWED_KENBURNS:
+            clip.ken_burns = "none"
+
+        # Apply transition style preference
+        allowed_tr = TRANSITION_STYLES.get(transition_style, ALLOWED_TRANSITIONS)
+        if not allowed_tr:
+            # "cut" style — force fade with 0 duration (handled in ffmpeg_service)
+            clip.transition = "fade"
+        elif clip.transition not in allowed_tr:
+            clip.transition = allowed_tr[0]
+        valid_clips.append(clip)
+
+    if len(valid_clips) < len(plan.clips):
+        log.info("  Sanitized clips: kept %d of %d (dropped %d invalid)",
+                 len(valid_clips), len(plan.clips), len(plan.clips) - len(valid_clips))
+        plan.clips = valid_clips
+
     chrono_count = _fix_chronological_order(plan)
     if chrono_count:
         log.info("  Fixed %d clip(s) \u2014 reordered to chronological within source videos", chrono_count)
 
-    # Recalculate timeline_start after reordering
+    # Recalculate timeline_start after reordering (account for crossfade overlap)
+    use_transitions = transition_style != "cut"
     t = 0.0
-    for clip in plan.clips:
+    for i, clip in enumerate(plan.clips):
         clip.timeline_start = round(t, 3)
         t += clip.end_time - clip.start_time
+        if use_transitions and i < len(plan.clips) - 1:
+            t -= TRANSITION_DURATION
+    plan.total_duration = round(t, 3)
 
     dedup_count = _deduplicate_clips(plan, videos)
     if dedup_count:
@@ -189,6 +236,9 @@ def run_pipeline(
     muted_audio = len(plan.clips) - kept_audio
     log.info("  Plan: %d clips, %d text overlays", len(plan.clips), len(plan.text_overlays))
     log.info("  Audio: %d clips with speech (keep_audio), %d muted", kept_audio, muted_audio)
+    for i, c in enumerate(plan.clips):
+        log.info("    Clip %d: src=%d [%.1f-%.1f] transition=%s ken_burns=%s",
+                 i, c.source_index, c.start_time, c.end_time, c.transition, c.ken_burns)
     log.info("  Duration: %.1fs", plan.total_duration)
     log.info("  Approach: %s", plan.description)
 
@@ -197,7 +247,8 @@ def run_pipeline(
     timestamp = int(time.time())
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     output_path = str(OUTPUT_DIR / f"reel_{timestamp}.mp4")
-    result_path = assemble_reel(plan, videos, output_path, audio_mode=audio_mode)
+    result_path = assemble_reel(plan, videos, output_path, audio_mode=audio_mode,
+                               transition_style=transition_style)
 
     elapsed = time.time() - start_time
     log.info("\n\u2713 Done in %.1fs \u2192 %s", elapsed, result_path)

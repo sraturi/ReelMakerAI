@@ -35,6 +35,26 @@ OUTPUT_HEIGHT = 1920
 # --- Audio ---
 AUDIO_SAMPLE_RATE = 44100
 
+# --- Transitions ---
+TRANSITION_DURATION = 0.3  # seconds of crossfade between clips
+ALLOWED_TRANSITIONS = [
+    "fade", "fadeblack", "dissolve",
+    "wipeleft", "wiperight",
+    "slideup", "slideleft",
+    "circleopen", "radial",
+]
+TRANSITION_STYLES = {
+    "auto": ALLOWED_TRANSITIONS,
+    "smooth": ["fade", "fadeblack", "dissolve"],
+    "dynamic": ["wipeleft", "wiperight", "slideup", "slideleft"],
+    "dramatic": ["circleopen", "radial", "fadeblack"],
+    "cut": [],  # empty = no xfade transitions
+}
+
+# --- Ken Burns ---
+KENBURNS_SCALE = 1.2  # overscan factor for zoom/pan room
+ALLOWED_KENBURNS = ["none", "zoom_in", "zoom_out", "pan_left", "pan_right"]
+
 # --- Beat detection ---
 MIN_BEAT_INTERVAL = 1.5  # minimum seconds between cuts
 
