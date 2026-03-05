@@ -1,10 +1,10 @@
 import { useState, useCallback } from "react";
-import { RefreshCw, Loader2 } from "lucide-react";
+import { RefreshCw, Loader2, X } from "lucide-react";
 import { startReplan } from "../../api/plan";
 import { useSessionStore } from "../../store/useSessionStore";
 import { useEditorStore } from "../../store/useEditorStore";
 import { useUIStore } from "../../store/useUIStore";
-import { useSSE } from "../../hooks/useSSE";
+import { useJobStatus } from "../../hooks/useJobStatus";
 
 export function AIActions() {
   const sessionId = useSessionStore((s) => s.sessionId);
@@ -20,12 +20,17 @@ export function AIActions() {
   const [jobId, setJobId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  useSSE(
+  const handleCancelled = useCallback(() => {
+    setJobId(null);
+    setBusy(false);
+  }, []);
+
+  const cancel = useJobStatus(
     jobId,
     useCallback(
-      (data: string) => {
+      (data: unknown) => {
         try {
-          const plan = JSON.parse(data);
+          const plan = data as { clips?: unknown[]; text_overlays?: unknown[] };
           setPlan(plan);
           setClips(plan.clips || []);
           setOverlays(plan.text_overlays || []);
@@ -38,6 +43,7 @@ export function AIActions() {
       },
       [setPlan, setClips, setOverlays, setError],
     ),
+    handleCancelled,
   );
 
   async function handleReEdit() {
@@ -54,6 +60,13 @@ export function AIActions() {
     }
   }
 
+  function handleCancel() {
+    cancel();
+    setJobId(null);
+    setBusy(false);
+    setLoading(false);
+  }
+
   return (
     <div className="flex gap-2">
       <input
@@ -65,18 +78,24 @@ export function AIActions() {
         className="flex-1 rounded-lg border border-border bg-surface-light px-3 py-2 text-sm text-text outline-none placeholder:text-text-muted/50 focus:border-primary"
         disabled={busy}
       />
-      <button
-        onClick={handleReEdit}
-        disabled={busy || !direction.trim()}
-        className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-50"
-      >
-        {busy ? (
-          <Loader2 size={14} className="animate-spin" />
-        ) : (
+      {busy ? (
+        <button
+          onClick={handleCancel}
+          className="flex items-center gap-1.5 rounded-lg border border-error/50 bg-error/10 px-4 py-2 text-sm font-medium text-error hover:bg-error/20"
+        >
+          <X size={14} />
+          Cancel
+        </button>
+      ) : (
+        <button
+          onClick={handleReEdit}
+          disabled={!direction.trim()}
+          className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-50"
+        >
           <RefreshCw size={14} />
-        )}
-        Re-edit
-      </button>
+          Re-edit
+        </button>
+      )}
     </div>
   );
 }

@@ -4,6 +4,7 @@ Replaces the previous in-memory dict.  Sessions survive server restarts.
 Uses stdlib sqlite3 + json — no extra dependencies.
 """
 
+import asyncio
 import json
 import logging
 import shutil
@@ -253,6 +254,7 @@ class JobStore:
             "result": None,
             "error": None,
             "created_at": time.time(),
+            "_task": None,
         }
         with self._lock:
             self._jobs[job_id] = job
@@ -263,13 +265,32 @@ class JobStore:
         with self._lock:
             return self._jobs.get(job_id)
 
+    def set_task(self, job_id: str, task: asyncio.Task):
+        """Store the asyncio.Task reference so it can be cancelled later."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job:
+                job["_task"] = task
+
+    def cancel(self, job_id: str) -> bool:
+        """Cancel a running job. Returns True if cancellation was initiated."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if not job or job["status"] != "running":
+                return False
+            job["status"] = "cancelled"
+            task: asyncio.Task | None = job.get("_task")
+            if task and not task.done():
+                task.cancel()
+            return True
+
     def _prune(self):
-        """Remove completed/errored jobs older than JOB_TTL."""
+        """Remove completed/errored/cancelled jobs older than JOB_TTL."""
         cutoff = time.time() - JOB_TTL
         with self._lock:
             expired = [
                 jid for jid, j in self._jobs.items()
-                if j["status"] in ("done", "error") and j.get("created_at", 0) < cutoff
+                if j["status"] in ("done", "error", "cancelled") and j.get("created_at", 0) < cutoff
             ]
             for jid in expired:
                 del self._jobs[jid]

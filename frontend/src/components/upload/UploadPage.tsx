@@ -1,12 +1,12 @@
 import { useCallback, useState } from "react";
-import { Sparkles, AlertCircle } from "lucide-react";
+import { Sparkles, AlertCircle, X } from "lucide-react";
 import { UploadDropzone } from "./UploadDropzone";
 import { VideoFileList } from "./VideoFileList";
 import { uploadVideos } from "../../api/upload";
 import { startAnalyze } from "../../api/analyze";
 import { useSessionStore } from "../../store/useSessionStore";
 import { useUIStore } from "../../store/useUIStore";
-import { useSSE } from "../../hooks/useSSE";
+import { useJobStatus } from "../../hooks/useJobStatus";
 
 export function UploadPage() {
   const sessionId = useSessionStore((s) => s.sessionId);
@@ -27,10 +27,15 @@ export function UploadPage() {
   const [analyzeJobId, setAnalyzeJobId] = useState<string | null>(null);
   const [phase, setPhase] = useState<"idle" | "uploading" | "analyzing">("idle");
 
-  // Handle analyze SSE completion → go to prompt step
-  useSSE(analyzeJobId, useCallback((data: string) => {
+  const handleCancelled = useCallback(() => {
+    setAnalyzeJobId(null);
+    setPhase("idle");
+  }, []);
+
+  // Handle analyze WebSocket completion → go to prompt step
+  const cancel = useJobStatus(analyzeJobId, useCallback((data: unknown) => {
     try {
-      const result = JSON.parse(data);
+      const result = data as { analysis: unknown };
       setAnalysis(result.analysis);
       setAnalyzeJobId(null);
       setPhase("idle");
@@ -38,7 +43,7 @@ export function UploadPage() {
     } catch (e) {
       setError(String(e));
     }
-  }, [setAnalysis, setStep, setError]));
+  }, [setAnalysis, setStep, setError]), handleCancelled);
 
   const handleFiles = useCallback(
     async (files: File[]) => {
@@ -82,6 +87,13 @@ export function UploadPage() {
     }
   }, [sessionId, settings.gemini_model, clearLogs, setLoading, setError]);
 
+  const handleCancel = useCallback(() => {
+    cancel();
+    setAnalyzeJobId(null);
+    setPhase("idle");
+    setLoading(false);
+  }, [cancel, setLoading]);
+
   return (
     <div className="space-y-6">
       <div>
@@ -116,14 +128,24 @@ export function UploadPage() {
               <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
             </select>
           </div>
-          <button
-            onClick={handleAnalyze}
-            disabled={loading}
-            className="gradient-bg flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-base font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Sparkles size={20} />
-            {phase === "analyzing" ? "Analyzing Videos..." : "Analyze Videos"}
-          </button>
+          {phase === "analyzing" ? (
+            <button
+              onClick={handleCancel}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-error/50 bg-error/10 py-3.5 text-base font-semibold text-error transition-opacity hover:bg-error/20"
+            >
+              <X size={20} />
+              Cancel Analysis
+            </button>
+          ) : (
+            <button
+              onClick={handleAnalyze}
+              disabled={loading}
+              className="gradient-bg flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-base font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Sparkles size={20} />
+              Analyze Videos
+            </button>
+          )}
         </div>
       )}
     </div>

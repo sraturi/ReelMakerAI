@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 
 @router.post("/render")
 async def render_reel(req: RenderRequest):
-    """Render the reel from user's edited plan. Returns job_id for SSE progress."""
+    """Render the reel from user's edited plan. Returns job_id for WebSocket progress."""
     session = store.get(req.session_id)
     if not session:
         return JSONResponse({"error": "Session not found"}, status_code=404)
@@ -28,9 +28,10 @@ async def render_reel(req: RenderRequest):
     job_id = uuid.uuid4().hex[:12]
     jobs.create(job_id)
 
-    asyncio.get_event_loop().create_task(
+    task = asyncio.get_event_loop().create_task(
         _run_render(job_id, session, req)
     )
+    jobs.set_task(job_id, task)
 
     return {"job_id": job_id}
 
@@ -139,6 +140,11 @@ async def _run_render(job_id: str, session, req: RenderRequest):
             valid_clips.append(clip)
         plan.clips = valid_clips
 
+        # Check cancellation before FFmpeg
+        if job["status"] == "cancelled":
+            job["logs"].append("Cancelled by user.")
+            return
+
         job["logs"].append(
             f"Rendering {len(plan.clips)} clips, {len(plan.text_overlays)} overlays..."
         )
@@ -152,6 +158,11 @@ async def _run_render(job_id: str, session, req: RenderRequest):
             audio_mode=req.audio_mode, transition_style=req.transition_style,
         )
 
+        # Check cancellation after render
+        if job["status"] == "cancelled":
+            job["logs"].append("Cancelled by user.")
+            return
+
         output_file = f"reel_{timestamp}.mp4"
         job["status"] = "done"
         job["result"] = {
@@ -159,6 +170,10 @@ async def _run_render(job_id: str, session, req: RenderRequest):
             "output_url": f"/api/output/{output_file}",
         }
         job["logs"].append(f"Render complete: {output_file}")
+
+    except asyncio.CancelledError:
+        job["status"] = "cancelled"
+        job["logs"].append("Cancelled by user.")
 
     except Exception as e:
         log.error("Render failed: %s", e, exc_info=True)

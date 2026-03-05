@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 
 @router.post("/plan")
 async def create_plan(req: PlanRequest):
-    """Generate an editing plan from stored analysis (Pass 2). Returns job_id for SSE."""
+    """Generate an editing plan from stored analysis (Pass 2). Returns job_id for WebSocket."""
     session = store.get(req.session_id)
     if not session:
         return JSONResponse({"error": "Session not found"}, status_code=404)
@@ -30,9 +30,10 @@ async def create_plan(req: PlanRequest):
     job_id = uuid.uuid4().hex[:12]
     jobs.create(job_id)
 
-    asyncio.get_event_loop().create_task(
+    task = asyncio.get_event_loop().create_task(
         _run_plan(job_id, session, req)
     )
+    jobs.set_task(job_id, task)
 
     return {"job_id": job_id}
 
@@ -68,9 +69,10 @@ async def replan(req: ReplanRequest):
     job_id = uuid.uuid4().hex[:12]
     jobs.create(job_id)
 
-    asyncio.get_event_loop().create_task(
+    task = asyncio.get_event_loop().create_task(
         _run_plan(job_id, session, plan_req)
     )
+    jobs.set_task(job_id, task)
 
     return {"job_id": job_id}
 
@@ -94,6 +96,11 @@ async def _run_plan(job_id: str, session, req: PlanRequest):
         )
         beat_times = beats_from_bpm(req.bpm, target_duration)
 
+        # Check cancellation before Gemini call
+        if job["status"] == "cancelled":
+            job["logs"].append("Cancelled by user.")
+            return
+
         job["logs"].append("Creating editing plan (Pass 2)...")
 
         plan = await asyncio.to_thread(
@@ -109,6 +116,11 @@ async def _run_plan(job_id: str, session, req: PlanRequest):
             composite_layouts=req.composite_layouts,
             model=req.gemini_model,
         )
+
+        # Check cancellation after Gemini call
+        if job["status"] == "cancelled":
+            job["logs"].append("Cancelled by user.")
+            return
 
         # Post-process plan (same validation as pipeline.py)
         from config import (
@@ -210,6 +222,10 @@ async def _run_plan(job_id: str, session, req: PlanRequest):
         job["logs"].append(
             f"Plan complete: {len(plan.clips)} clips, {len(plan.text_overlays)} overlays"
         )
+
+    except asyncio.CancelledError:
+        job["status"] = "cancelled"
+        job["logs"].append("Cancelled by user.")
 
     except Exception as e:
         log.error("Plan failed: %s", e, exc_info=True)

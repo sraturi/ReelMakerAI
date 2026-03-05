@@ -1,11 +1,11 @@
 import { useCallback, useState } from "react";
-import { Sparkles, AlertCircle, Film, Zap } from "lucide-react";
+import { Sparkles, AlertCircle, Film, Zap, X } from "lucide-react";
 import { SettingsPanel } from "../settings/SettingsPanel";
 import { startPlan } from "../../api/plan";
 import { useSessionStore } from "../../store/useSessionStore";
 import { useEditorStore } from "../../store/useEditorStore";
 import { useUIStore } from "../../store/useUIStore";
-import { useSSE } from "../../hooks/useSSE";
+import { useJobStatus } from "../../hooks/useJobStatus";
 
 export function PromptPage() {
   const sessionId = useSessionStore((s) => s.sessionId);
@@ -24,10 +24,15 @@ export function PromptPage() {
   const [planJobId, setPlanJobId] = useState<string | null>(null);
   const [planning, setPlanning] = useState(false);
 
-  // Handle plan SSE completion → go to editor
-  useSSE(planJobId, useCallback((data: string) => {
+  const handleCancelled = useCallback(() => {
+    setPlanJobId(null);
+    setPlanning(false);
+  }, []);
+
+  // Handle plan WebSocket completion → go to editor
+  const cancel = useJobStatus(planJobId, useCallback((data: unknown) => {
     try {
-      const plan = JSON.parse(data);
+      const plan = data as { clips?: unknown[]; text_overlays?: unknown[] };
       setPlan(plan);
       setClips(plan.clips || []);
       setOverlays(plan.text_overlays || []);
@@ -37,7 +42,7 @@ export function PromptPage() {
     } catch (e) {
       setError(String(e));
     }
-  }, [setPlan, setClips, setOverlays, setStep, setError]));
+  }, [setPlan, setClips, setOverlays, setStep, setError]), handleCancelled);
 
   const handleGeneratePlan = useCallback(async () => {
     if (!sessionId || !settings.prompt.trim()) return;
@@ -54,13 +59,20 @@ export function PromptPage() {
     }
   }, [sessionId, settings, clearLogs, setLoading, setError]);
 
+  const handleCancel = useCallback(() => {
+    cancel();
+    setPlanJobId(null);
+    setPlanning(false);
+    setLoading(false);
+  }, [cancel, setLoading]);
+
   // Compute analysis summary
-  const totalScenes = analysis?.videos.reduce((sum, v) => sum + v.scenes.length, 0) ?? 0;
+  const totalScenes = analysis?.videos.reduce((sum: number, v: { scenes: unknown[] }) => sum + v.scenes.length, 0) ?? 0;
   const peakMoments = analysis?.videos.reduce(
-    (sum, v) => sum + v.scenes.filter((s) => s.is_peak_moment).length,
+    (sum: number, v: { scenes: { is_peak_moment: boolean }[] }) => sum + v.scenes.filter((s) => s.is_peak_moment).length,
     0,
   ) ?? 0;
-  const totalDuration = analysis?.videos.reduce((sum, v) => sum + v.duration, 0) ?? 0;
+  const totalDuration = analysis?.videos.reduce((sum: number, v: { duration: number }) => sum + v.duration, 0) ?? 0;
 
   const canGenerate = settings.prompt.trim().length > 0;
 
@@ -104,7 +116,7 @@ export function PromptPage() {
       {analysis && analysis.videos.length > 0 && (
         <div className="space-y-2 rounded-xl bg-surface p-4">
           <h3 className="text-sm font-semibold">Video Summaries</h3>
-          {analysis.videos.map((v, i) => (
+          {analysis.videos.map((v: { filename: string; summary: string }, i: number) => (
             <div key={i} className="text-sm text-text-muted">
               <span className="font-medium text-text">{v.filename}:</span>{" "}
               {v.summary}
@@ -122,14 +134,24 @@ export function PromptPage() {
         </div>
       )}
 
-      <button
-        onClick={handleGeneratePlan}
-        disabled={!canGenerate || loading}
-        className="gradient-bg flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-base font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        <Sparkles size={20} />
-        {planning ? "Generating Plan..." : "Generate Plan"}
-      </button>
+      {planning ? (
+        <button
+          onClick={handleCancel}
+          className="flex w-full items-center justify-center gap-2 rounded-xl border border-error/50 bg-error/10 py-3.5 text-base font-semibold text-error transition-opacity hover:bg-error/20"
+        >
+          <X size={20} />
+          Cancel Plan
+        </button>
+      ) : (
+        <button
+          onClick={handleGeneratePlan}
+          disabled={!canGenerate || loading}
+          className="gradient-bg flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-base font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Sparkles size={20} />
+          Generate Plan
+        </button>
+      )}
     </div>
   );
 }
