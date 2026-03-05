@@ -8,13 +8,10 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from models import PlanRequest, ReplanRequest
-from session_store import store
+from session_store import store, jobs
 
 router = APIRouter()
 log = logging.getLogger(__name__)
-
-# Job store for plan operations
-plan_jobs: dict[str, dict] = {}
 
 
 @router.post("/plan")
@@ -31,12 +28,7 @@ async def create_plan(req: PlanRequest):
     session.settings = req.model_dump(exclude={"session_id"})
 
     job_id = uuid.uuid4().hex[:12]
-    plan_jobs[job_id] = {
-        "status": "running",
-        "logs": [],
-        "result": None,
-        "error": None,
-    }
+    jobs.create(job_id)
 
     asyncio.get_event_loop().create_task(
         _run_plan(job_id, session, req)
@@ -74,12 +66,7 @@ async def replan(req: ReplanRequest):
     )
 
     job_id = uuid.uuid4().hex[:12]
-    plan_jobs[job_id] = {
-        "status": "running",
-        "logs": [],
-        "result": None,
-        "error": None,
-    }
+    jobs.create(job_id)
 
     asyncio.get_event_loop().create_task(
         _run_plan(job_id, session, plan_req)
@@ -90,19 +77,9 @@ async def replan(req: ReplanRequest):
 
 async def _run_plan(job_id: str, session, req: PlanRequest):
     """Run Pass 2 plan generation in background."""
-    from api.status import job_stores
-    job_stores["plan"] = plan_jobs
-
-    handler = _JobLogHandler(job_id, plan_jobs)
-    handler.setFormatter(logging.Formatter("%(message)s"))
-    handler.setLevel(logging.INFO)
-    root_logger = logging.getLogger()
-    root_logger.addHandler(handler)
+    job = jobs.get(job_id)
 
     try:
-        import config
-        config.GEMINI_MODEL = req.gemini_model
-
         from beat_detection import beats_from_bpm
         from gemini_service import create_editing_plan_from_scenes
         from models import MusicTrack, VideoInfo
@@ -110,14 +87,14 @@ async def _run_plan(job_id: str, session, req: PlanRequest):
         videos = [VideoInfo(**v) for v in session.videos]
         target_duration = float(req.target_duration)
 
-        plan_jobs[job_id]["logs"].append("Generating beats...")
+        job["logs"].append("Generating beats...")
         track = MusicTrack(
             filename="", name=f"Custom {req.bpm} BPM", genre="",
             vibe="custom", bpm=req.bpm, duration=target_duration,
         )
         beat_times = beats_from_bpm(req.bpm, target_duration)
 
-        plan_jobs[job_id]["logs"].append("Creating editing plan (Pass 2)...")
+        job["logs"].append("Creating editing plan (Pass 2)...")
 
         plan = await asyncio.to_thread(
             create_editing_plan_from_scenes,
@@ -130,6 +107,7 @@ async def _run_plan(job_id: str, session, req: PlanRequest):
             reel_style=req.reel_style,
             reel_approach=req.reel_approach,
             composite_layouts=req.composite_layouts,
+            model=req.gemini_model,
         )
 
         # Post-process plan (same validation as pipeline.py)
@@ -227,27 +205,13 @@ async def _run_plan(job_id: str, session, req: PlanRequest):
 
         session.plan = plan_dict
 
-        plan_jobs[job_id]["status"] = "done"
-        plan_jobs[job_id]["result"] = plan_dict
-        plan_jobs[job_id]["logs"].append(
+        job["status"] = "done"
+        job["result"] = plan_dict
+        job["logs"].append(
             f"Plan complete: {len(plan.clips)} clips, {len(plan.text_overlays)} overlays"
         )
 
     except Exception as e:
         log.error("Plan failed: %s", e, exc_info=True)
-        plan_jobs[job_id]["status"] = "error"
-        plan_jobs[job_id]["error"] = str(e)
-
-    finally:
-        root_logger.removeHandler(handler)
-
-
-class _JobLogHandler(logging.Handler):
-    def __init__(self, job_id: str, jobs: dict):
-        super().__init__()
-        self.job_id = job_id
-        self.jobs = jobs
-
-    def emit(self, record: logging.LogRecord):
-        if self.job_id in self.jobs:
-            self.jobs[self.job_id]["logs"].append(self.format(record))
+        job["status"] = "error"
+        job["error"] = str(e)

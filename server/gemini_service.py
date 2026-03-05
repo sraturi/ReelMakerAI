@@ -83,9 +83,10 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 # Gemini helpers
 # ---------------------------------------------------------------------------
 
-def _call_gemini(contents, *, temperature: float = 0.7, json_output: bool = False):
+def _call_gemini(contents, *, temperature: float = 0.7, json_output: bool = False, model: str | None = None):
     """Call Gemini with automatic retry on rate-limit (429) errors."""
-    config = types.GenerateContentConfig(
+    model = model or GEMINI_MODEL
+    gen_config = types.GenerateContentConfig(
         temperature=temperature,
         max_output_tokens=65536,
         **({"response_mime_type": "application/json"} if json_output else {}),
@@ -93,9 +94,9 @@ def _call_gemini(contents, *, temperature: float = 0.7, json_output: bool = Fals
     for attempt in range(MAX_RETRIES):
         try:
             return client.models.generate_content(
-                model=GEMINI_MODEL,
+                model=model,
                 contents=contents,
-                config=config,
+                config=gen_config,
             )
         except Exception as e:
             if "429" in str(e) and attempt < MAX_RETRIES - 1:
@@ -258,6 +259,7 @@ APPROACH_GUIDES = {
 def analyze_video_scenes(
     videos: list[VideoInfo],
     uploaded_files: list[types.File],
+    model: str | None = None,
 ) -> SceneAnalysisResult:
     """
     Pass 1: Watch videos and describe scenes in ~2-second windows.
@@ -322,7 +324,7 @@ Return ONLY valid JSON:
     content_parts.append(types.Part.from_text(text=analysis_prompt))
 
     for attempt in range(2):
-        response = _call_gemini(content_parts, temperature=0.5, json_output=True)
+        response = _call_gemini(content_parts, temperature=0.5, json_output=True, model=model)
         try:
             return SceneAnalysisResult(**_parse_gemini_json(response.text))
         except (json.JSONDecodeError, Exception) as e:
@@ -369,6 +371,7 @@ def create_editing_plan_from_scenes(
     reel_style: str = "montage",
     reel_approach: str = "hook",
     composite_layouts: list[str] | None = None,
+    model: str | None = None,
 ) -> EditingPlan:
     """Pass 2: Create an editing plan from scene descriptions (text-only)."""
     beat_times_str = ", ".join(f"{t:.2f}" for t in beat_times)
@@ -573,7 +576,7 @@ Return ONLY valid JSON:
 }}"""
 
     for attempt in range(2):
-        response = _call_gemini(edit_prompt, temperature=0.7, json_output=True)
+        response = _call_gemini(edit_prompt, temperature=0.7, json_output=True, model=model)
         try:
             return EditingPlan(**_parse_gemini_json(response.text))
         except (json.JSONDecodeError, Exception) as e:
@@ -595,6 +598,7 @@ def analyze_videos_and_create_plan(
     target_duration: int | None = None,
     reel_style: str = "montage",
     reel_approach: str = "hook",
+    model: str | None = None,
 ) -> EditingPlan:
     """
     Two-pass Gemini pipeline:
@@ -615,8 +619,8 @@ def analyze_videos_and_create_plan(
         uploaded_files.append(upload_video(video.path))
 
     # --- Pass 1: Scene Analysis (with video files) ---
-    log.info("  Pass 1: Analyzing video scenes (%s)...", GEMINI_MODEL)
-    analysis = analyze_video_scenes(videos, uploaded_files)
+    log.info("  Pass 1: Analyzing video scenes (%s)...", model or GEMINI_MODEL)
+    analysis = analyze_video_scenes(videos, uploaded_files, model=model)
 
     total_scenes = sum(len(v.scenes) for v in analysis.videos)
     peak_moments = sum(1 for v in analysis.videos for s in v.scenes if s.is_peak_moment)
@@ -629,7 +633,7 @@ def analyze_videos_and_create_plan(
     _delete_uploaded_files(uploaded_files)
 
     # --- Pass 2: Edit Planning (text-only) ---
-    log.info("  Pass 2: Creating editing plan from scene analysis (%s)...", GEMINI_MODEL)
+    log.info("  Pass 2: Creating editing plan from scene analysis (%s)...", model or GEMINI_MODEL)
     scene_menu = _format_scene_menu(analysis)
     plan = create_editing_plan_from_scenes(
         scene_menu=scene_menu,
@@ -640,6 +644,7 @@ def analyze_videos_and_create_plan(
         target_duration=target_dur,
         reel_style=reel_style,
         reel_approach=reel_approach,
+        model=model,
     )
     log.info("  Pass 2 complete: %d clips, %d overlays", len(plan.clips), len(plan.text_overlays))
 

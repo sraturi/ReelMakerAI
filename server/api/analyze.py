@@ -8,13 +8,10 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from session_store import store
+from session_store import store, jobs
 
 router = APIRouter()
 log = logging.getLogger(__name__)
-
-# Job store for long-running analyze operations
-analyze_jobs: dict[str, dict] = {}
 
 
 class AnalyzeRequest(BaseModel):
@@ -33,12 +30,7 @@ async def analyze_videos(req: AnalyzeRequest):
         return JSONResponse({"error": "No videos uploaded"}, status_code=400)
 
     job_id = uuid.uuid4().hex[:12]
-    analyze_jobs[job_id] = {
-        "status": "running",
-        "logs": [],
-        "result": None,
-        "error": None,
-    }
+    job = jobs.create(job_id)
 
     asyncio.get_event_loop().create_task(
         _run_analyze(job_id, session, req.gemini_model)
@@ -49,19 +41,9 @@ async def analyze_videos(req: AnalyzeRequest):
 
 async def _run_analyze(job_id: str, session, gemini_model: str):
     """Run Pass 1 analysis in a background thread."""
-    from api.status import job_stores
-    job_stores["analyze"] = analyze_jobs
-
-    handler = _JobLogHandler(job_id, analyze_jobs)
-    handler.setFormatter(logging.Formatter("%(message)s"))
-    handler.setLevel(logging.INFO)
-    root_logger = logging.getLogger()
-    root_logger.addHandler(handler)
+    job = jobs.get(job_id)
 
     try:
-        import config
-        config.GEMINI_MODEL = gemini_model
-
         from models import VideoInfo
         from gemini_service import upload_video, analyze_video_scenes, _format_scene_menu
 
@@ -70,20 +52,20 @@ async def _run_analyze(job_id: str, session, gemini_model: str):
         total = len(videos)
         uploaded_files = []
         for i, video in enumerate(videos, 1):
-            analyze_jobs[job_id]["logs"].append(
+            job["logs"].append(
                 f"Uploading video {i}/{total}: {video.filename}"
             )
             uploaded_files.append(
                 await asyncio.to_thread(upload_video, video.path)
             )
-            analyze_jobs[job_id]["logs"].append(
+            job["logs"].append(
                 f"Uploaded {i}/{total}: {video.filename}"
             )
 
-        analyze_jobs[job_id]["logs"].append("Analyzing video scenes (Pass 1)...")
+        job["logs"].append("Analyzing video scenes (Pass 1)...")
 
         analysis = await asyncio.to_thread(
-            analyze_video_scenes, videos, uploaded_files
+            analyze_video_scenes, videos, uploaded_files, model=gemini_model
         )
 
         # Clean up uploaded Gemini files
@@ -98,31 +80,17 @@ async def _run_analyze(job_id: str, session, gemini_model: str):
         total_scenes = sum(len(v.scenes) for v in analysis.videos)
         peak_moments = sum(1 for v in analysis.videos for s in v.scenes if s.is_peak_moment)
 
-        analyze_jobs[job_id]["status"] = "done"
-        analyze_jobs[job_id]["result"] = {
+        job["status"] = "done"
+        job["result"] = {
             "total_scenes": total_scenes,
             "peak_moments": peak_moments,
             "analysis": analysis_dict,
         }
-        analyze_jobs[job_id]["logs"].append(
+        job["logs"].append(
             f"Analysis complete: {total_scenes} scenes, {peak_moments} peak moments"
         )
 
     except Exception as e:
         log.error("Analyze failed: %s", e, exc_info=True)
-        analyze_jobs[job_id]["status"] = "error"
-        analyze_jobs[job_id]["error"] = str(e)
-
-    finally:
-        root_logger.removeHandler(handler)
-
-
-class _JobLogHandler(logging.Handler):
-    def __init__(self, job_id: str, jobs: dict):
-        super().__init__()
-        self.job_id = job_id
-        self.jobs = jobs
-
-    def emit(self, record: logging.LogRecord):
-        if self.job_id in self.jobs:
-            self.jobs[self.job_id]["logs"].append(self.format(record))
+        job["status"] = "error"
+        job["error"] = str(e)

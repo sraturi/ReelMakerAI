@@ -161,9 +161,6 @@ Examples:
     print(f"  Model: {gemini_model}")
     print("=" * 50)
 
-    import config
-    config.GEMINI_MODEL = gemini_model
-
     from pipeline import run_pipeline
 
     try:
@@ -176,6 +173,7 @@ Examples:
             reel_style=reel_style,
             reel_approach=reel_approach,
             transition_style=transition_style,
+            model=gemini_model,
         )
         print(f"\n{'=' * 50}")
         print(f"  Output: {output}")

@@ -232,5 +232,51 @@ class SessionStore:
         log.debug("Cleaned up session %s", session_id)
 
 
-# Global singleton
+JOB_TTL = 600  # auto-prune completed/errored jobs after 10 minutes
+
+
+class JobStore:
+    """Unified in-memory job store with auto-pruning.
+
+    Replaces the scattered per-module dicts (analyze_jobs, plan_jobs, render_jobs).
+    Jobs are ephemeral — they live only while the server is up.
+    """
+
+    def __init__(self):
+        self._jobs: dict[str, dict] = {}
+        self._lock = threading.Lock()
+
+    def create(self, job_id: str) -> dict:
+        job = {
+            "status": "running",
+            "logs": [],
+            "result": None,
+            "error": None,
+            "created_at": time.time(),
+        }
+        with self._lock:
+            self._jobs[job_id] = job
+        self._prune()
+        return job
+
+    def get(self, job_id: str) -> dict | None:
+        with self._lock:
+            return self._jobs.get(job_id)
+
+    def _prune(self):
+        """Remove completed/errored jobs older than JOB_TTL."""
+        cutoff = time.time() - JOB_TTL
+        with self._lock:
+            expired = [
+                jid for jid, j in self._jobs.items()
+                if j["status"] in ("done", "error") and j.get("created_at", 0) < cutoff
+            ]
+            for jid in expired:
+                del self._jobs[jid]
+        if expired:
+            log.debug("Pruned %d old jobs", len(expired))
+
+
+# Global singletons
 store = SessionStore()
+jobs = JobStore()

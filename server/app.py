@@ -239,9 +239,6 @@ async def _run_pipeline_bg(
     root_logger.addHandler(handler)
 
     try:
-        import config
-        config.GEMINI_MODEL = gemini_model
-
         from pipeline import run_pipeline
 
         output_path = await asyncio.to_thread(
@@ -255,6 +252,7 @@ async def _run_pipeline_bg(
             reel_style=reel_style,
             reel_approach=reel_approach,
             transition_style=transition_style,
+            model=gemini_model,
         )
 
         output_file = Path(output_path).name

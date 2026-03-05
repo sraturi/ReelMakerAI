@@ -126,6 +126,7 @@ def run_pipeline(
     reel_style: str = "montage",
     reel_approach: str = "hook",
     transition_style: str = "auto",
+    model: str | None = None,
 ) -> str:
     """
     Run the full reel-making pipeline:
@@ -163,6 +164,7 @@ def run_pipeline(
         target_duration=target_duration,
         reel_style=reel_style,
         reel_approach=reel_approach,
+        model=model,
     )
 
     # Sort clips by timeline_start and recalculate sequential timing

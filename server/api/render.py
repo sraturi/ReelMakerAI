@@ -9,13 +9,10 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from models import RenderRequest
-from session_store import store
+from session_store import store, jobs
 
 router = APIRouter()
 log = logging.getLogger(__name__)
-
-# Job store for render operations
-render_jobs: dict[str, dict] = {}
 
 
 @router.post("/render")
@@ -29,12 +26,7 @@ async def render_reel(req: RenderRequest):
         return JSONResponse({"error": "No videos in session"}, status_code=400)
 
     job_id = uuid.uuid4().hex[:12]
-    render_jobs[job_id] = {
-        "status": "running",
-        "logs": [],
-        "result": None,
-        "error": None,
-    }
+    jobs.create(job_id)
 
     asyncio.get_event_loop().create_task(
         _run_render(job_id, session, req)
@@ -45,14 +37,7 @@ async def render_reel(req: RenderRequest):
 
 async def _run_render(job_id: str, session, req: RenderRequest):
     """Run FFmpeg render in background."""
-    from api.status import job_stores
-    job_stores["render"] = render_jobs
-
-    handler = _JobLogHandler(job_id, render_jobs)
-    handler.setFormatter(logging.Formatter("%(message)s"))
-    handler.setLevel(logging.INFO)
-    root_logger = logging.getLogger()
-    root_logger.addHandler(handler)
+    job = jobs.get(job_id)
 
     try:
         from config import (
@@ -154,7 +139,7 @@ async def _run_render(job_id: str, session, req: RenderRequest):
             valid_clips.append(clip)
         plan.clips = valid_clips
 
-        render_jobs[job_id]["logs"].append(
+        job["logs"].append(
             f"Rendering {len(plan.clips)} clips, {len(plan.text_overlays)} overlays..."
         )
 
@@ -168,28 +153,14 @@ async def _run_render(job_id: str, session, req: RenderRequest):
         )
 
         output_file = f"reel_{timestamp}.mp4"
-        render_jobs[job_id]["status"] = "done"
-        render_jobs[job_id]["result"] = {
+        job["status"] = "done"
+        job["result"] = {
             "output": output_file,
             "output_url": f"/api/output/{output_file}",
         }
-        render_jobs[job_id]["logs"].append(f"Render complete: {output_file}")
+        job["logs"].append(f"Render complete: {output_file}")
 
     except Exception as e:
         log.error("Render failed: %s", e, exc_info=True)
-        render_jobs[job_id]["status"] = "error"
-        render_jobs[job_id]["error"] = str(e)
-
-    finally:
-        root_logger.removeHandler(handler)
-
-
-class _JobLogHandler(logging.Handler):
-    def __init__(self, job_id: str, jobs: dict):
-        super().__init__()
-        self.job_id = job_id
-        self.jobs = jobs
-
-    def emit(self, record: logging.LogRecord):
-        if self.job_id in self.jobs:
-            self.jobs[self.job_id]["logs"].append(self.format(record))
+        job["status"] = "error"
+        job["error"] = str(e)
