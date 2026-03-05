@@ -11,6 +11,8 @@ load_dotenv()
 # --- Paths ---
 BASE_DIR = Path(__file__).parent
 OUTPUT_DIR = BASE_DIR / "output"
+UPLOAD_DIR = BASE_DIR / "uploads"
+THUMBNAIL_DIR = BASE_DIR / "thumbnails"
 
 # Font path (platform-aware)
 _FONT_PATHS = {

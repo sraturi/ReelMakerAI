@@ -102,3 +102,70 @@ class MusicTrack(BaseModel):
     bpm: int
     duration: float = Field(description="Duration in seconds")
     tags: list[str] = Field(default_factory=list, description="Mood/use-case tags")
+
+
+# ---------------------------------------------------------------------------
+# Interactive editor models
+# ---------------------------------------------------------------------------
+
+class ClipPlanWithId(ClipPlan):
+    """ClipPlan with a frontend tracking ID and thumbnail URL."""
+    clip_id: str = Field(description="Unique ID for frontend tracking")
+    thumbnail_url: str = Field(default="", description="URL to clip thumbnail")
+
+
+class TextOverlayWithId(TextOverlay):
+    """TextOverlay with a frontend tracking ID."""
+    overlay_id: str = Field(description="Unique ID for frontend tracking")
+
+
+class PlanRequest(BaseModel):
+    """Request to generate an editing plan (Pass 2)."""
+    session_id: str
+    prompt: str
+    reel_style: str = "montage"
+    reel_approach: str = "hook"
+    target_duration: int = 30
+    bpm: int = 120
+    captions: bool = True
+    audio_mode: str = "voice"
+    transition_style: str = "auto"
+    gemini_model: str = "gemini-2.5-flash"
+
+
+class ReplanRequest(BaseModel):
+    """Request to re-generate plan with new direction (reuses Pass 1)."""
+    session_id: str
+    direction: str = Field(description="New creative direction for the plan")
+    prompt: str = ""
+    reel_style: str = "montage"
+    reel_approach: str = "hook"
+    target_duration: int = 30
+    bpm: int = 120
+    captions: bool = True
+    audio_mode: str = "voice"
+    transition_style: str = "auto"
+
+
+class SuggestClipRequest(BaseModel):
+    """Request AI to suggest alternative clips for a position."""
+    session_id: str
+    clip_index: int
+    current_plan: dict
+    direction: str = ""
+
+
+class RewriteCaptionRequest(BaseModel):
+    """Request AI to rewrite a caption."""
+    session_id: str
+    caption_text: str
+    context: str = ""
+    direction: str = ""
+
+
+class RenderRequest(BaseModel):
+    """Request to render the final reel from user's edited plan."""
+    session_id: str
+    plan: dict
+    audio_mode: str = "voice"
+    transition_style: str = "auto"

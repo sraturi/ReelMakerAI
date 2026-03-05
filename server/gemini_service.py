@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import time
 from pathlib import Path
 
@@ -17,6 +18,18 @@ from config import (
     RETRY_BACKOFF,
 )
 from models import EditingPlan, MusicTrack, SceneAnalysisResult, VideoInfo
+
+
+def _parse_gemini_json(text: str) -> dict:
+    """Parse JSON from Gemini, tolerating trailing commas."""
+    # Strip markdown code fences if present
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+    # Remove trailing commas before } or ]
+    cleaned = re.sub(r",\s*([}\]])", r"\1", cleaned)
+    return json.loads(cleaned)
 
 log = logging.getLogger(__name__)
 
@@ -265,7 +278,7 @@ Return ONLY valid JSON:
     content_parts.append(types.Part.from_text(text=analysis_prompt))
 
     response = _call_gemini(content_parts, temperature=0.5, json_output=True)
-    return SceneAnalysisResult(**json.loads(response.text))
+    return SceneAnalysisResult(**_parse_gemini_json(response.text))
 
 
 # ---------------------------------------------------------------------------
@@ -446,7 +459,7 @@ Return ONLY valid JSON:
 }}"""
 
     response = _call_gemini(edit_prompt, temperature=0.7, json_output=True)
-    return EditingPlan(**json.loads(response.text))
+    return EditingPlan(**_parse_gemini_json(response.text))
 
 
 # ---------------------------------------------------------------------------

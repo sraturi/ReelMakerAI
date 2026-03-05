@@ -26,8 +26,16 @@ Thumbs.db
 # Output files
 server/output/
 
+# Server runtime dirs
+server/uploads/
+server/thumbnails/
+
 # Test videos
 server/test-videos/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
 
 # Temporary files
 *.tmp

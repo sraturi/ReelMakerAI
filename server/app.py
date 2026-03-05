@@ -5,16 +5,18 @@ import logging
 import shutil
 import sys
 import tempfile
+import time
 import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sse_starlette.sse import EventSourceResponse
 
-from config import OUTPUT_DIR, VIDEO_EXTENSIONS
+from config import OUTPUT_DIR, UPLOAD_DIR, THUMBNAIL_DIR, VIDEO_EXTENSIONS
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -22,19 +24,52 @@ from config import OUTPUT_DIR, VIDEO_EXTENSIONS
 
 app = FastAPI(title="ReelMaker AI")
 
+# CORS for React dev server
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 BASE_DIR = Path(__file__).parent
 TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
+FRONTEND_DIST = BASE_DIR.parent / "frontend" / "dist"
 
 STATIC_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+THUMBNAIL_DIR.mkdir(parents=True, exist_ok=True)
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+# --- Mount API routes ---
+from api import api_router
+app.include_router(api_router)
+
+# --- Background cleanup ---
+from session_store import store as session_store
+
+@app.on_event("startup")
+async def start_cleanup_loop():
+    async def cleanup_loop():
+        while True:
+            await asyncio.sleep(600)  # every 10 minutes
+            session_store.cleanup_expired()
+            # Clean output files older than 2 hours
+            cutoff = time.time() - 7200
+            for f in OUTPUT_DIR.iterdir():
+                if f.is_file() and f.stat().st_mtime < cutoff:
+                    f.unlink(missing_ok=True)
+    asyncio.create_task(cleanup_loop())
+
+# --- Static file mounts ---
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-app.mount("/output", StaticFiles(directory=str(OUTPUT_DIR)), name="output")
 
 # ---------------------------------------------------------------------------
-# In-memory job store
+# In-memory job store (legacy one-shot pipeline)
 # ---------------------------------------------------------------------------
 
 jobs: dict[str, dict] = {}
@@ -53,11 +88,11 @@ class JobLogHandler(logging.Handler):
 
 
 # ---------------------------------------------------------------------------
-# Routes
+# Legacy routes (original one-shot pipeline)
 # ---------------------------------------------------------------------------
 
-@app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
+@app.get("/legacy", response_class=HTMLResponse)
+async def legacy_index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
@@ -76,7 +111,6 @@ async def generate(
     gemini_model: str = Form("gemini-2.5-flash"),
 ):
     """Accept form + uploaded videos, start pipeline in background, return job_id."""
-    # Save uploaded files to a temp directory
     tmp_dir = tempfile.mkdtemp(prefix="reelmaker_")
     video_paths: list[str] = []
 
@@ -105,7 +139,6 @@ async def generate(
         "error": None,
     }
 
-    # Launch pipeline in background
     asyncio.get_event_loop().create_task(
         _run_pipeline_bg(
             job_id,
@@ -139,13 +172,11 @@ async def status_stream(job_id: str):
             if not job:
                 break
 
-            # Send any new log lines
             logs = job["logs"]
             while last_idx < len(logs):
                 yield {"event": "log", "data": logs[last_idx]}
                 last_idx += 1
 
-            # Check if done
             if job["status"] == "done":
                 yield {
                     "event": "done",
@@ -180,7 +211,7 @@ async def result(job_id: str):
 
 
 # ---------------------------------------------------------------------------
-# Background pipeline runner
+# Background pipeline runner (legacy)
 # ---------------------------------------------------------------------------
 
 async def _run_pipeline_bg(
@@ -199,18 +230,15 @@ async def _run_pipeline_bg(
     tmp_dir: str,
 ):
     """Run the blocking pipeline in a thread, capturing logs."""
-    # Set up logging handler for this job
     handler = JobLogHandler(job_id)
     handler.setFormatter(logging.Formatter("%(message)s"))
     handler.setLevel(logging.INFO)
 
-    # Attach handler to the root logger so all pipeline modules are captured
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
     root_logger.addHandler(handler)
 
     try:
-        # Override gemini model at runtime (same pattern as cli.py)
         import config
         config.GEMINI_MODEL = gemini_model
 
@@ -229,7 +257,6 @@ async def _run_pipeline_bg(
             transition_style=transition_style,
         )
 
-        # Make the output path relative for serving
         output_file = Path(output_path).name
         jobs[job_id]["status"] = "done"
         jobs[job_id]["output"] = output_file
@@ -241,8 +268,43 @@ async def _run_pipeline_bg(
 
     finally:
         root_logger.removeHandler(handler)
-        # Clean up temp uploaded files
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# Serve React frontend (production build) or fallback to legacy
+# ---------------------------------------------------------------------------
+
+@app.get("/")
+async def serve_root():
+    """Serve React app index.html if built, else redirect to legacy."""
+    index = FRONTEND_DIST / "index.html"
+    if index.exists():
+        return FileResponse(str(index))
+    return HTMLResponse(
+        '<h2>Frontend not built yet</h2>'
+        '<p>Run <code>cd frontend && npm run build</code> or use '
+        '<code>npm run dev</code> on port 3000/5173.</p>'
+        '<p><a href="/legacy">Use legacy UI</a></p>'
+    )
+
+
+# Serve React static assets
+if FRONTEND_DIST.exists():
+    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="frontend-assets")
+
+
+# Catch-all for React client-side routing (must be last)
+@app.get("/{full_path:path}")
+async def serve_react_app(full_path: str):
+    """Serve React app for any unmatched route (client-side routing)."""
+    # Don't catch API or static routes
+    if full_path.startswith(("api/", "static/", "assets/")):
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    index = FRONTEND_DIST / "index.html"
+    if index.exists():
+        return FileResponse(str(index))
+    return JSONResponse({"error": "Not found"}, status_code=404)
 
 
 # ---------------------------------------------------------------------------
