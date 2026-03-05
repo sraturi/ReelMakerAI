@@ -15,7 +15,6 @@ export function AIActions() {
   const clearLogs = useUIStore((s) => s.clearLogs);
   const setLoading = useUIStore((s) => s.setLoading);
   const setError = useUIStore((s) => s.setError);
-  const setCancelJob = useUIStore((s) => s.setCancelJob);
 
   const [direction, setDirection] = useState("");
   const [jobId, setJobId] = useState<string | null>(null);
@@ -26,26 +25,24 @@ export function AIActions() {
     setBusy(false);
   }, []);
 
-  const cancel = useJobStatus(
-    jobId,
-    useCallback(
-      (data: unknown) => {
-        try {
-          const plan = data as { clips?: unknown[]; text_overlays?: unknown[] };
-          setPlan(plan);
-          setClips(plan.clips || []);
-          setOverlays(plan.text_overlays || []);
-          setDirection("");
-        } catch (e) {
-          setError(String(e));
-        }
-        setJobId(null);
-        setBusy(false);
-      },
-      [setPlan, setClips, setOverlays, setError],
-    ),
-    handleCancelled,
+  const handleReplanDone = useCallback(
+    (data: unknown) => {
+      try {
+        const plan = data as { clips?: unknown[]; text_overlays?: unknown[] };
+        setPlan(plan);
+        setClips(plan.clips || []);
+        setOverlays(plan.text_overlays || []);
+        setDirection("");
+      } catch (e) {
+        setError(String(e));
+      }
+      setJobId(null);
+      setBusy(false);
+    },
+    [setPlan, setClips, setOverlays, setError],
   );
+
+  const cancel = useJobStatus(jobId, handleReplanDone, handleCancelled);
 
   const handleCancel = useCallback(() => {
     cancel();
@@ -59,7 +56,6 @@ export function AIActions() {
     setBusy(true);
     clearLogs();
     setLoading(true, "Re-generating plan...");
-    setCancelJob(handleCancel);
     try {
       const { job_id } = await startReplan(sessionId, direction, settings);
       setJobId(job_id);

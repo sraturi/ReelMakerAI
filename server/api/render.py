@@ -28,9 +28,7 @@ async def render_reel(req: RenderRequest):
     job_id = uuid.uuid4().hex[:12]
     jobs.create(job_id)
 
-    task = asyncio.get_event_loop().create_task(
-        _run_render(job_id, session, req)
-    )
+    task = asyncio.create_task(_run_render(job_id, session, req))
     jobs.set_task(job_id, task)
 
     return {"job_id": job_id}
@@ -153,9 +151,11 @@ async def _run_render(job_id: str, session, req: RenderRequest):
         timestamp = int(time.time())
         output_path = str(OUTPUT_DIR / f"reel_{timestamp}.mp4")
 
+        cancel_event = job.get("_cancel_event")
         result_path = await asyncio.to_thread(
             assemble_reel, plan, videos, output_path,
             audio_mode=req.audio_mode, transition_style=req.transition_style,
+            cancel_event=cancel_event,
         )
 
         # Check cancellation after render
@@ -164,12 +164,12 @@ async def _run_render(job_id: str, session, req: RenderRequest):
             return
 
         output_file = f"reel_{timestamp}.mp4"
-        job["status"] = "done"
-        job["result"] = {
+        result = {
             "output": output_file,
             "output_url": f"/api/output/{output_file}",
         }
-        job["logs"].append(f"Render complete: {output_file}")
+        if jobs.complete(job_id, result):
+            job["logs"].append(f"Render complete: {output_file}")
 
     except asyncio.CancelledError:
         job["status"] = "cancelled"
@@ -177,5 +177,4 @@ async def _run_render(job_id: str, session, req: RenderRequest):
 
     except Exception as e:
         log.error("Render failed: %s", e, exc_info=True)
-        job["status"] = "error"
-        job["error"] = str(e)
+        jobs.fail(job_id, str(e))

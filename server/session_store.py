@@ -255,6 +255,7 @@ class JobStore:
             "error": None,
             "created_at": time.time(),
             "_task": None,
+            "_cancel_event": threading.Event(),
         }
         with self._lock:
             self._jobs[job_id] = job
@@ -272,6 +273,26 @@ class JobStore:
             if job:
                 job["_task"] = task
 
+    def complete(self, job_id: str, result: Any) -> bool:
+        """Atomically set a running job to done. Returns False if already cancelled."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if not job or job["status"] != "running":
+                return False
+            job["result"] = result
+            job["status"] = "done"
+            return True
+
+    def fail(self, job_id: str, error: str) -> bool:
+        """Atomically set a running job to error. Returns False if already cancelled."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if not job or job["status"] != "running":
+                return False
+            job["error"] = error
+            job["status"] = "error"
+            return True
+
     def cancel(self, job_id: str) -> bool:
         """Cancel a running job. Returns True if cancellation was initiated."""
         with self._lock:
@@ -279,6 +300,11 @@ class JobStore:
             if not job or job["status"] != "running":
                 return False
             job["status"] = "cancelled"
+            # Signal the cancel event (for thread-pool work like FFmpeg)
+            cancel_event: threading.Event | None = job.get("_cancel_event")
+            if cancel_event:
+                cancel_event.set()
+            # Cancel the asyncio task (raises CancelledError at next await)
             task: asyncio.Task | None = job.get("_task")
             if task and not task.done():
                 task.cancel()

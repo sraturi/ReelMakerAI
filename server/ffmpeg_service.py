@@ -531,8 +531,15 @@ def assemble_reel(
     output_path: str,
     audio_mode: str = "voice",
     transition_style: str = "auto",
+    cancel_event: "threading.Event | None" = None,
 ) -> str:
-    """Assemble the final reel using FFmpeg."""
+    """Assemble the final reel using FFmpeg.
+
+    If *cancel_event* is provided and gets set while FFmpeg is running,
+    the subprocess is terminated early and a RuntimeError is raised.
+    """
+    import threading
+
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
     cmd = build_ffmpeg_command(plan, videos, output_path, audio_mode=audio_mode,
@@ -545,11 +552,29 @@ def assemble_reel(
     log.info("  Audio: %s (%d keep, %d muted)", audio_desc.get(audio_mode, audio_mode), kept, muted)
     log.info("  Video: crop-to-fill %dx%d (no black bars)", OUTPUT_WIDTH, OUTPUT_HEIGHT)
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-    if result.returncode != 0:
-        log.error("  FFmpeg stderr:\n%s", result.stderr)
-        raise RuntimeError(f"FFmpeg failed with code {result.returncode}")
+    if cancel_event is not None:
+        # Poll until process finishes or cancel is requested
+        while proc.poll() is None:
+            if cancel_event.wait(timeout=0.5):
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                # Clean up partial output
+                out = Path(output_path)
+                if out.exists():
+                    out.unlink(missing_ok=True)
+                raise RuntimeError("Render cancelled by user")
+        stdout, stderr = proc.communicate()
+    else:
+        stdout, stderr = proc.communicate()
+
+    if proc.returncode != 0:
+        log.error("  FFmpeg stderr:\n%s", stderr)
+        raise RuntimeError(f"FFmpeg failed with code {proc.returncode}")
 
     out = Path(output_path)
     if not out.exists() or out.stat().st_size == 0:

@@ -18,7 +18,6 @@ export function PromptPage() {
   const setLoading = useUIStore((s) => s.setLoading);
   const setError = useUIStore((s) => s.setError);
   const clearLogs = useUIStore((s) => s.clearLogs);
-  const setCancelJob = useUIStore((s) => s.setCancelJob);
   const error = useUIStore((s) => s.error);
   const loading = useUIStore((s) => s.loading);
 
@@ -30,8 +29,7 @@ export function PromptPage() {
     setPlanning(false);
   }, []);
 
-  // Handle plan WebSocket completion → go to editor
-  const cancel = useJobStatus(planJobId, useCallback((data: unknown) => {
+  const handlePlanDone = useCallback((data: unknown) => {
     try {
       const plan = data as { clips?: unknown[]; text_overlays?: unknown[] };
       setPlan(plan);
@@ -43,7 +41,9 @@ export function PromptPage() {
     } catch (e) {
       setError(String(e));
     }
-  }, [setPlan, setClips, setOverlays, setStep, setError]), handleCancelled);
+  }, [setPlan, setClips, setOverlays, setStep, setError]);
+
+  const cancel = useJobStatus(planJobId, handlePlanDone, handleCancelled);
 
   const handleCancel = useCallback(() => {
     cancel();
@@ -58,7 +58,6 @@ export function PromptPage() {
     clearLogs();
     setPlanning(true);
     setLoading(true, "Creating editing plan...");
-    setCancelJob(handleCancel);
     try {
       const { job_id } = await startPlan(sessionId, settings);
       setPlanJobId(job_id);
@@ -66,7 +65,7 @@ export function PromptPage() {
       setError(e instanceof Error ? e.message : String(e));
       setPlanning(false);
     }
-  }, [sessionId, settings, clearLogs, setLoading, setCancelJob, handleCancel, setError]);
+  }, [sessionId, settings, clearLogs, setLoading, setError]);
 
   // Compute analysis summary
   const totalScenes = analysis?.videos.reduce((sum: number, v: { scenes: unknown[] }) => sum + v.scenes.length, 0) ?? 0;

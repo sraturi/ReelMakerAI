@@ -21,7 +21,6 @@ export function UploadPage() {
   const setUploadProgress = useUIStore((s) => s.setUploadProgress);
   const setError = useUIStore((s) => s.setError);
   const clearLogs = useUIStore((s) => s.clearLogs);
-  const setCancelJob = useUIStore((s) => s.setCancelJob);
   const error = useUIStore((s) => s.error);
   const loading = useUIStore((s) => s.loading);
 
@@ -33,8 +32,7 @@ export function UploadPage() {
     setPhase("idle");
   }, []);
 
-  // Handle analyze WebSocket completion → go to prompt step
-  const cancel = useJobStatus(analyzeJobId, useCallback((data: unknown) => {
+  const handleAnalyzeDone = useCallback((data: unknown) => {
     try {
       const result = data as { analysis: unknown };
       setAnalysis(result.analysis);
@@ -44,7 +42,9 @@ export function UploadPage() {
     } catch (e) {
       setError(String(e));
     }
-  }, [setAnalysis, setStep, setError]), handleCancelled);
+  }, [setAnalysis, setStep, setError]);
+
+  const cancel = useJobStatus(analyzeJobId, handleAnalyzeDone, handleCancelled);
 
   const handleFiles = useCallback(
     async (files: File[]) => {
@@ -86,7 +86,6 @@ export function UploadPage() {
     clearLogs();
     setPhase("analyzing");
     setLoading(true, "Analyzing videos with AI...");
-    setCancelJob(handleCancel);
     try {
       const { job_id } = await startAnalyze(sessionId, settings.gemini_model);
       setAnalyzeJobId(job_id);
@@ -94,7 +93,7 @@ export function UploadPage() {
       setError(e instanceof Error ? e.message : String(e));
       setPhase("idle");
     }
-  }, [sessionId, settings.gemini_model, clearLogs, setLoading, setCancelJob, handleCancel, setError]);
+  }, [sessionId, settings.gemini_model, clearLogs, setLoading, setError]);
 
   return (
     <div className="space-y-6">

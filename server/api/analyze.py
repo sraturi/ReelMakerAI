@@ -32,9 +32,7 @@ async def analyze_videos(req: AnalyzeRequest):
     job_id = uuid.uuid4().hex[:12]
     job = jobs.create(job_id)
 
-    task = asyncio.get_event_loop().create_task(
-        _run_analyze(job_id, session, req.gemini_model)
-    )
+    task = asyncio.create_task(_run_analyze(job_id, session, req.gemini_model))
     jobs.set_task(job_id, task)
 
     return {"job_id": job_id}
@@ -43,6 +41,7 @@ async def analyze_videos(req: AnalyzeRequest):
 async def _run_analyze(job_id: str, session, gemini_model: str):
     """Run Pass 1 analysis in a background thread."""
     job = jobs.get(job_id)
+    uploaded_files = []
 
     try:
         from models import VideoInfo
@@ -51,7 +50,6 @@ async def _run_analyze(job_id: str, session, gemini_model: str):
         videos = [VideoInfo(**v) for v in session.videos]
 
         total = len(videos)
-        uploaded_files = []
         for i, video in enumerate(videos, 1):
             # Check cancellation between uploads
             if job["status"] == "cancelled":
@@ -84,10 +82,6 @@ async def _run_analyze(job_id: str, session, gemini_model: str):
             job["logs"].append("Cancelled by user.")
             return
 
-        # Clean up uploaded Gemini files
-        from gemini_service import _delete_uploaded_files
-        await asyncio.to_thread(_delete_uploaded_files, uploaded_files)
-
         # Store analysis in session
         analysis_dict = analysis.model_dump()
         session.analysis = analysis_dict
@@ -96,15 +90,15 @@ async def _run_analyze(job_id: str, session, gemini_model: str):
         total_scenes = sum(len(v.scenes) for v in analysis.videos)
         peak_moments = sum(1 for v in analysis.videos for s in v.scenes if s.is_peak_moment)
 
-        job["status"] = "done"
-        job["result"] = {
+        result = {
             "total_scenes": total_scenes,
             "peak_moments": peak_moments,
             "analysis": analysis_dict,
         }
-        job["logs"].append(
-            f"Analysis complete: {total_scenes} scenes, {peak_moments} peak moments"
-        )
+        if jobs.complete(job_id, result):
+            job["logs"].append(
+                f"Analysis complete: {total_scenes} scenes, {peak_moments} peak moments"
+            )
 
     except asyncio.CancelledError:
         job["status"] = "cancelled"
@@ -112,5 +106,13 @@ async def _run_analyze(job_id: str, session, gemini_model: str):
 
     except Exception as e:
         log.error("Analyze failed: %s", e, exc_info=True)
-        job["status"] = "error"
-        job["error"] = str(e)
+        jobs.fail(job_id, str(e))
+
+    finally:
+        # Always clean up Gemini uploaded files, even on cancel/error
+        if uploaded_files:
+            try:
+                from gemini_service import _delete_uploaded_files
+                await asyncio.to_thread(_delete_uploaded_files, uploaded_files)
+            except Exception:
+                log.debug("Failed to clean up Gemini files for job %s", job_id)

@@ -68,7 +68,7 @@ export const useUIStore = create<UIState>((set) => ({
   setUploadProgress: (pct) => set({ uploadProgress: pct }),
   addLog: (log) => set((s) => ({ logs: [...s.logs, log] })),
   clearLogs: () => set({ logs: [] }),
-  setError: (error) => set({ error, loading: false, uploadProgress: null }),
+  setError: (error) => set({ error, loading: false, uploadProgress: null, cancelJob: null }),
   setActiveJobId: (id) => set({ activeJobId: id }),
   setRenderOutput: (url) => set({ renderOutput: url }),
   setCancelJob: (handler) => set({ cancelJob: handler }),

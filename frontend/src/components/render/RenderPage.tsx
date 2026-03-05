@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback } from "react";
 import { RenderProgress } from "./RenderProgress";
 import { useUIStore } from "../../store/useUIStore";
 import { useJobStatus } from "../../hooks/useJobStatus";
@@ -11,47 +11,27 @@ export function RenderPage() {
   const setRenderOutput = useUIStore((s) => s.setRenderOutput);
   const setStep = useUIStore((s) => s.setStep);
   const setError = useUIStore((s) => s.setError);
-  const setLoading = useUIStore((s) => s.setLoading);
-  const setCancelJob = useUIStore((s) => s.setCancelJob);
 
   const handleCancelled = useCallback(() => {
     setActiveJobId(null);
     setStep("edit");
   }, [setActiveJobId, setStep]);
 
-  // Listen for render WebSocket completion
-  const cancel = useJobStatus(
-    activeJobId,
-    useCallback(
-      (data: unknown) => {
-        try {
-          const result = data as { output_url: string };
-          setRenderOutput(result.output_url);
-          setActiveJobId(null);
-          setStep("preview");
-        } catch (e) {
-          setError(String(e));
-        }
-      },
-      [setRenderOutput, setActiveJobId, setStep, setError],
-    ),
-    handleCancelled,
+  const handleRenderDone = useCallback(
+    (data: unknown) => {
+      try {
+        const result = data as { output_url: string };
+        setRenderOutput(result.output_url);
+        setActiveJobId(null);
+        setStep("preview");
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [setRenderOutput, setActiveJobId, setStep, setError],
   );
 
-  const cancelRef = useRef(cancel);
-  cancelRef.current = cancel;
-
-  // Register cancel handler in the LoadingOverlay when render is active
-  useEffect(() => {
-    if (activeJobId && loading) {
-      setCancelJob(() => {
-        cancelRef.current();
-        setActiveJobId(null);
-        setLoading(false);
-        setStep("edit");
-      });
-    }
-  }, [activeJobId, loading, setCancelJob, setActiveJobId, setLoading, setStep]);
+  useJobStatus(activeJobId, handleRenderDone, handleCancelled);
 
   return (
     <div>

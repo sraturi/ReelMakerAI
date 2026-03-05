@@ -30,9 +30,7 @@ async def create_plan(req: PlanRequest):
     job_id = uuid.uuid4().hex[:12]
     jobs.create(job_id)
 
-    task = asyncio.get_event_loop().create_task(
-        _run_plan(job_id, session, req)
-    )
+    task = asyncio.create_task(_run_plan(job_id, session, req))
     jobs.set_task(job_id, task)
 
     return {"job_id": job_id}
@@ -69,9 +67,7 @@ async def replan(req: ReplanRequest):
     job_id = uuid.uuid4().hex[:12]
     jobs.create(job_id)
 
-    task = asyncio.get_event_loop().create_task(
-        _run_plan(job_id, session, plan_req)
-    )
+    task = asyncio.create_task(_run_plan(job_id, session, plan_req))
     jobs.set_task(job_id, task)
 
     return {"job_id": job_id}
@@ -217,11 +213,10 @@ async def _run_plan(job_id: str, session, req: PlanRequest):
 
         session.plan = plan_dict
 
-        job["status"] = "done"
-        job["result"] = plan_dict
-        job["logs"].append(
-            f"Plan complete: {len(plan.clips)} clips, {len(plan.text_overlays)} overlays"
-        )
+        if jobs.complete(job_id, plan_dict):
+            job["logs"].append(
+                f"Plan complete: {len(plan.clips)} clips, {len(plan.text_overlays)} overlays"
+            )
 
     except asyncio.CancelledError:
         job["status"] = "cancelled"
@@ -229,5 +224,4 @@ async def _run_plan(job_id: str, session, req: PlanRequest):
 
     except Exception as e:
         log.error("Plan failed: %s", e, exc_info=True)
-        job["status"] = "error"
-        job["error"] = str(e)
+        jobs.fail(job_id, str(e))
