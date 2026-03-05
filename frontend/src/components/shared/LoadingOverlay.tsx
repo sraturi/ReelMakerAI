@@ -1,4 +1,4 @@
-import { Loader2 } from "lucide-react";
+import { Loader2, X } from "lucide-react";
 import { useUIStore } from "../../store/useUIStore";
 
 export function LoadingOverlay() {
@@ -6,6 +6,7 @@ export function LoadingOverlay() {
   const message = useUIStore((s) => s.loadingMessage);
   const logs = useUIStore((s) => s.logs);
   const uploadProgress = useUIStore((s) => s.uploadProgress);
+  const cancelJob = useUIStore((s) => s.cancelJob);
 
   if (!loading) return null;
 
@@ -38,6 +39,15 @@ export function LoadingOverlay() {
               </div>
             ))}
           </div>
+        )}
+        {cancelJob && (
+          <button
+            onClick={cancelJob}
+            className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg border border-error/50 bg-error/10 py-2.5 text-sm font-medium text-error transition-colors hover:bg-error/20"
+          >
+            <X size={16} />
+            Cancel
+          </button>
         )}
       </div>
     </div>

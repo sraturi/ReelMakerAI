@@ -13,6 +13,7 @@ interface UIState {
   error: string | null;
   activeJobId: string | null;
   renderOutput: string | null;
+  cancelJob: (() => void) | null;
 
   setStep: (step: Step) => void;
   toggleTheme: () => void;
@@ -23,6 +24,7 @@ interface UIState {
   setError: (error: string | null) => void;
   setActiveJobId: (id: string | null) => void;
   setRenderOutput: (url: string | null) => void;
+  setCancelJob: (handler: (() => void) | null) => void;
 }
 
 function getInitialTheme(): Theme {
@@ -52,6 +54,7 @@ export const useUIStore = create<UIState>((set) => ({
   error: null,
   activeJobId: null,
   renderOutput: null,
+  cancelJob: null,
 
   setStep: (step) => set({ step, error: null }),
   toggleTheme: () =>
@@ -61,11 +64,12 @@ export const useUIStore = create<UIState>((set) => ({
       return { theme: next };
     }),
   setLoading: (loading, message = "") =>
-    set({ loading, loadingMessage: message }),
+    set(loading ? { loading, loadingMessage: message } : { loading, loadingMessage: message, cancelJob: null }),
   setUploadProgress: (pct) => set({ uploadProgress: pct }),
   addLog: (log) => set((s) => ({ logs: [...s.logs, log] })),
   clearLogs: () => set({ logs: [] }),
   setError: (error) => set({ error, loading: false, uploadProgress: null }),
   setActiveJobId: (id) => set({ activeJobId: id }),
   setRenderOutput: (url) => set({ renderOutput: url }),
+  setCancelJob: (handler) => set({ cancelJob: handler }),
 }));

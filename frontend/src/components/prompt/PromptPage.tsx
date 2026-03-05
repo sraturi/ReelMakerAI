@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { Sparkles, AlertCircle, Film, Zap, X } from "lucide-react";
+import { Sparkles, AlertCircle, Film, Zap } from "lucide-react";
 import { SettingsPanel } from "../settings/SettingsPanel";
 import { startPlan } from "../../api/plan";
 import { useSessionStore } from "../../store/useSessionStore";
@@ -18,6 +18,7 @@ export function PromptPage() {
   const setLoading = useUIStore((s) => s.setLoading);
   const setError = useUIStore((s) => s.setError);
   const clearLogs = useUIStore((s) => s.clearLogs);
+  const setCancelJob = useUIStore((s) => s.setCancelJob);
   const error = useUIStore((s) => s.error);
   const loading = useUIStore((s) => s.loading);
 
@@ -44,12 +45,20 @@ export function PromptPage() {
     }
   }, [setPlan, setClips, setOverlays, setStep, setError]), handleCancelled);
 
+  const handleCancel = useCallback(() => {
+    cancel();
+    setPlanJobId(null);
+    setPlanning(false);
+    setLoading(false);
+  }, [cancel, setLoading]);
+
   const handleGeneratePlan = useCallback(async () => {
     if (!sessionId || !settings.prompt.trim()) return;
     setError(null);
     clearLogs();
     setPlanning(true);
     setLoading(true, "Creating editing plan...");
+    setCancelJob(handleCancel);
     try {
       const { job_id } = await startPlan(sessionId, settings);
       setPlanJobId(job_id);
@@ -57,14 +66,7 @@ export function PromptPage() {
       setError(e instanceof Error ? e.message : String(e));
       setPlanning(false);
     }
-  }, [sessionId, settings, clearLogs, setLoading, setError]);
-
-  const handleCancel = useCallback(() => {
-    cancel();
-    setPlanJobId(null);
-    setPlanning(false);
-    setLoading(false);
-  }, [cancel, setLoading]);
+  }, [sessionId, settings, clearLogs, setLoading, setCancelJob, handleCancel, setError]);
 
   // Compute analysis summary
   const totalScenes = analysis?.videos.reduce((sum: number, v: { scenes: unknown[] }) => sum + v.scenes.length, 0) ?? 0;
@@ -134,24 +136,14 @@ export function PromptPage() {
         </div>
       )}
 
-      {planning ? (
-        <button
-          onClick={handleCancel}
-          className="flex w-full items-center justify-center gap-2 rounded-xl border border-error/50 bg-error/10 py-3.5 text-base font-semibold text-error transition-opacity hover:bg-error/20"
-        >
-          <X size={20} />
-          Cancel Plan
-        </button>
-      ) : (
-        <button
-          onClick={handleGeneratePlan}
-          disabled={!canGenerate || loading}
-          className="gradient-bg flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-base font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <Sparkles size={20} />
-          Generate Plan
-        </button>
-      )}
+      <button
+        onClick={handleGeneratePlan}
+        disabled={!canGenerate || loading}
+        className="gradient-bg flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-base font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <Sparkles size={20} />
+        {planning ? "Generating Plan..." : "Generate Plan"}
+      </button>
     </div>
   );
 }

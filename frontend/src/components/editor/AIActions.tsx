@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { RefreshCw, Loader2, X } from "lucide-react";
+import { RefreshCw, Loader2 } from "lucide-react";
 import { startReplan } from "../../api/plan";
 import { useSessionStore } from "../../store/useSessionStore";
 import { useEditorStore } from "../../store/useEditorStore";
@@ -15,6 +15,7 @@ export function AIActions() {
   const clearLogs = useUIStore((s) => s.clearLogs);
   const setLoading = useUIStore((s) => s.setLoading);
   const setError = useUIStore((s) => s.setError);
+  const setCancelJob = useUIStore((s) => s.setCancelJob);
 
   const [direction, setDirection] = useState("");
   const [jobId, setJobId] = useState<string | null>(null);
@@ -46,11 +47,19 @@ export function AIActions() {
     handleCancelled,
   );
 
+  const handleCancel = useCallback(() => {
+    cancel();
+    setJobId(null);
+    setBusy(false);
+    setLoading(false);
+  }, [cancel, setLoading]);
+
   async function handleReEdit() {
     if (!sessionId || !direction.trim()) return;
     setBusy(true);
     clearLogs();
     setLoading(true, "Re-generating plan...");
+    setCancelJob(handleCancel);
     try {
       const { job_id } = await startReplan(sessionId, direction, settings);
       setJobId(job_id);
@@ -58,13 +67,6 @@ export function AIActions() {
       setError(e instanceof Error ? e.message : String(e));
       setBusy(false);
     }
-  }
-
-  function handleCancel() {
-    cancel();
-    setJobId(null);
-    setBusy(false);
-    setLoading(false);
   }
 
   return (
@@ -78,24 +80,18 @@ export function AIActions() {
         className="flex-1 rounded-lg border border-border bg-surface-light px-3 py-2 text-sm text-text outline-none placeholder:text-text-muted/50 focus:border-primary"
         disabled={busy}
       />
-      {busy ? (
-        <button
-          onClick={handleCancel}
-          className="flex items-center gap-1.5 rounded-lg border border-error/50 bg-error/10 px-4 py-2 text-sm font-medium text-error hover:bg-error/20"
-        >
-          <X size={14} />
-          Cancel
-        </button>
-      ) : (
-        <button
-          onClick={handleReEdit}
-          disabled={!direction.trim()}
-          className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-50"
-        >
+      <button
+        onClick={handleReEdit}
+        disabled={busy || !direction.trim()}
+        className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-50"
+      >
+        {busy ? (
+          <Loader2 size={14} className="animate-spin" />
+        ) : (
           <RefreshCw size={14} />
-          Re-edit
-        </button>
-      )}
+        )}
+        Re-edit
+      </button>
     </div>
   );
 }

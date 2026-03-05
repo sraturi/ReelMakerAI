@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { Sparkles, AlertCircle, X } from "lucide-react";
+import { Sparkles, AlertCircle } from "lucide-react";
 import { UploadDropzone } from "./UploadDropzone";
 import { VideoFileList } from "./VideoFileList";
 import { uploadVideos } from "../../api/upload";
@@ -21,6 +21,7 @@ export function UploadPage() {
   const setUploadProgress = useUIStore((s) => s.setUploadProgress);
   const setError = useUIStore((s) => s.setError);
   const clearLogs = useUIStore((s) => s.clearLogs);
+  const setCancelJob = useUIStore((s) => s.setCancelJob);
   const error = useUIStore((s) => s.error);
   const loading = useUIStore((s) => s.loading);
 
@@ -72,12 +73,20 @@ export function UploadPage() {
     [sessionId, setSessionId, setVideos, setLoading, setUploadProgress, setError],
   );
 
+  const handleCancel = useCallback(() => {
+    cancel();
+    setAnalyzeJobId(null);
+    setPhase("idle");
+    setLoading(false);
+  }, [cancel, setLoading]);
+
   const handleAnalyze = useCallback(async () => {
     if (!sessionId) return;
     setError(null);
     clearLogs();
     setPhase("analyzing");
     setLoading(true, "Analyzing videos with AI...");
+    setCancelJob(handleCancel);
     try {
       const { job_id } = await startAnalyze(sessionId, settings.gemini_model);
       setAnalyzeJobId(job_id);
@@ -85,14 +94,7 @@ export function UploadPage() {
       setError(e instanceof Error ? e.message : String(e));
       setPhase("idle");
     }
-  }, [sessionId, settings.gemini_model, clearLogs, setLoading, setError]);
-
-  const handleCancel = useCallback(() => {
-    cancel();
-    setAnalyzeJobId(null);
-    setPhase("idle");
-    setLoading(false);
-  }, [cancel, setLoading]);
+  }, [sessionId, settings.gemini_model, clearLogs, setLoading, setCancelJob, handleCancel, setError]);
 
   return (
     <div className="space-y-6">
@@ -128,24 +130,14 @@ export function UploadPage() {
               <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
             </select>
           </div>
-          {phase === "analyzing" ? (
-            <button
-              onClick={handleCancel}
-              className="flex w-full items-center justify-center gap-2 rounded-xl border border-error/50 bg-error/10 py-3.5 text-base font-semibold text-error transition-opacity hover:bg-error/20"
-            >
-              <X size={20} />
-              Cancel Analysis
-            </button>
-          ) : (
-            <button
-              onClick={handleAnalyze}
-              disabled={loading}
-              className="gradient-bg flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-base font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Sparkles size={20} />
-              Analyze Videos
-            </button>
-          )}
+          <button
+            onClick={handleAnalyze}
+            disabled={loading}
+            className="gradient-bg flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-base font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Sparkles size={20} />
+            {phase === "analyzing" ? "Analyzing Videos..." : "Analyze Videos"}
+          </button>
         </div>
       )}
     </div>

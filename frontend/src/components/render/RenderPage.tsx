@@ -1,5 +1,4 @@
-import { useCallback } from "react";
-import { X } from "lucide-react";
+import { useCallback, useEffect, useRef } from "react";
 import { RenderProgress } from "./RenderProgress";
 import { useUIStore } from "../../store/useUIStore";
 import { useJobStatus } from "../../hooks/useJobStatus";
@@ -13,6 +12,7 @@ export function RenderPage() {
   const setStep = useUIStore((s) => s.setStep);
   const setError = useUIStore((s) => s.setError);
   const setLoading = useUIStore((s) => s.setLoading);
+  const setCancelJob = useUIStore((s) => s.setCancelJob);
 
   const handleCancelled = useCallback(() => {
     setActiveJobId(null);
@@ -38,27 +38,24 @@ export function RenderPage() {
     handleCancelled,
   );
 
-  const handleCancel = useCallback(() => {
-    cancel();
-    setActiveJobId(null);
-    setLoading(false);
-    setStep("edit");
-  }, [cancel, setActiveJobId, setLoading, setStep]);
+  const cancelRef = useRef(cancel);
+  cancelRef.current = cancel;
+
+  // Register cancel handler in the LoadingOverlay when render is active
+  useEffect(() => {
+    if (activeJobId && loading) {
+      setCancelJob(() => {
+        cancelRef.current();
+        setActiveJobId(null);
+        setLoading(false);
+        setStep("edit");
+      });
+    }
+  }, [activeJobId, loading, setCancelJob, setActiveJobId, setLoading, setStep]);
 
   return (
     <div>
-      {loading && (
-        <div className="space-y-4">
-          <RenderProgress />
-          <button
-            onClick={handleCancel}
-            className="mx-auto flex items-center gap-2 rounded-lg border border-error/50 bg-error/10 px-4 py-2 text-sm font-medium text-error transition-opacity hover:bg-error/20"
-          >
-            <X size={16} />
-            Cancel Render
-          </button>
-        </div>
-      )}
+      {loading && <RenderProgress />}
       {error && (
         <div className="flex flex-col items-center space-y-4 py-12">
           <p className="text-lg font-medium text-error">Render Failed</p>
