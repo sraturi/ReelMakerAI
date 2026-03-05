@@ -1,16 +1,17 @@
-import { Upload, Search, Edit3, Play, Check } from "lucide-react";
+import { Upload, Search, MessageSquare, Edit3, Play, Check } from "lucide-react";
 import { useUIStore } from "../../store/useUIStore";
 import type { Step } from "../../types";
 
 const steps: { key: Step; label: string; icon: typeof Upload }[] = [
   { key: "upload", label: "Upload", icon: Upload },
   { key: "analyze", label: "Analyze", icon: Search },
+  { key: "prompt", label: "Prompt", icon: MessageSquare },
   { key: "edit", label: "Edit", icon: Edit3 },
   { key: "render", label: "Render", icon: Play },
   { key: "preview", label: "Preview", icon: Check },
 ];
 
-const stepOrder: Step[] = ["upload", "analyze", "edit", "render", "preview"];
+const stepOrder: Step[] = ["upload", "analyze", "prompt", "edit", "render", "preview"];
 
 export function StepIndicator() {
   const currentStep = useUIStore((s) => s.step);
@@ -28,7 +29,7 @@ export function StepIndicator() {
             <div
               className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
                 isActive
-                  ? "bg-primary text-white"
+                  ? "gradient-bg text-white"
                   : isPast
                     ? "bg-primary/20 text-primary"
                     : "text-text-muted"
@@ -40,7 +41,7 @@ export function StepIndicator() {
             {i < steps.length - 1 && (
               <div
                 className={`mx-1 h-px w-4 ${
-                  i < currentIdx ? "bg-primary" : "bg-border"
+                  i < currentIdx ? "gradient-bg" : "bg-border"
                 }`}
               />
             )}

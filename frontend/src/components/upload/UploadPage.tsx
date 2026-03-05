@@ -2,12 +2,9 @@ import { useCallback, useState } from "react";
 import { Sparkles, AlertCircle } from "lucide-react";
 import { UploadDropzone } from "./UploadDropzone";
 import { VideoFileList } from "./VideoFileList";
-import { SettingsPanel } from "../settings/SettingsPanel";
 import { uploadVideos } from "../../api/upload";
 import { startAnalyze } from "../../api/analyze";
-import { startPlan } from "../../api/plan";
 import { useSessionStore } from "../../store/useSessionStore";
-import { useEditorStore } from "../../store/useEditorStore";
 import { useUIStore } from "../../store/useUIStore";
 import { useSSE } from "../../hooks/useSSE";
 
@@ -15,12 +12,10 @@ export function UploadPage() {
   const sessionId = useSessionStore((s) => s.sessionId);
   const videos = useSessionStore((s) => s.videos);
   const settings = useSessionStore((s) => s.settings);
+  const updateSettings = useSessionStore((s) => s.updateSettings);
   const setSessionId = useSessionStore((s) => s.setSessionId);
   const setVideos = useSessionStore((s) => s.setVideos);
-  const setPlan = useSessionStore((s) => s.setPlan);
   const setAnalysis = useSessionStore((s) => s.setAnalysis);
-  const setClips = useEditorStore((s) => s.setClips);
-  const setOverlays = useEditorStore((s) => s.setOverlays);
   const setStep = useUIStore((s) => s.setStep);
   const setLoading = useUIStore((s) => s.setLoading);
   const setUploadProgress = useUIStore((s) => s.setUploadProgress);
@@ -30,40 +25,20 @@ export function UploadPage() {
   const loading = useUIStore((s) => s.loading);
 
   const [analyzeJobId, setAnalyzeJobId] = useState<string | null>(null);
-  const [planJobId, setPlanJobId] = useState<string | null>(null);
-  const [phase, setPhase] = useState<"idle" | "uploading" | "analyzing" | "planning">("idle");
+  const [phase, setPhase] = useState<"idle" | "uploading" | "analyzing">("idle");
 
-  // Handle analyze SSE completion → start plan
-  useSSE(analyzeJobId, useCallback(async (data: string) => {
+  // Handle analyze SSE completion → go to prompt step
+  useSSE(analyzeJobId, useCallback((data: string) => {
     try {
       const result = JSON.parse(data);
       setAnalysis(result.analysis);
       setAnalyzeJobId(null);
-
-      // Chain to plan
-      setPhase("planning");
-      setLoading(true, "Creating editing plan...");
-      const { job_id } = await startPlan(sessionId!, settings);
-      setPlanJobId(job_id);
-    } catch (e) {
-      setError(String(e));
-    }
-  }, [sessionId, settings, setAnalysis, setLoading, setError]));
-
-  // Handle plan SSE completion → go to editor
-  useSSE(planJobId, useCallback((data: string) => {
-    try {
-      const plan = JSON.parse(data);
-      setPlan(plan);
-      setClips(plan.clips || []);
-      setOverlays(plan.text_overlays || []);
-      setPlanJobId(null);
       setPhase("idle");
-      setStep("edit");
+      setStep("prompt");
     } catch (e) {
       setError(String(e));
     }
-  }, [setPlan, setClips, setOverlays, setStep, setError]));
+  }, [setAnalysis, setStep, setError]));
 
   const handleFiles = useCallback(
     async (files: File[]) => {
@@ -74,10 +49,14 @@ export function UploadPage() {
       try {
         const result = await uploadVideos(files, sessionId || undefined, (pct) => {
           setUploadProgress(pct);
+          if (pct >= 100) {
+            setLoading(true, "Processing videos...");
+            setUploadProgress(null);
+          }
         });
         setUploadProgress(null);
         setSessionId(result.session_id);
-        setVideos(result.videos);  // API returns full accumulated list
+        setVideos(result.videos);
         setLoading(false);
         setPhase("idle");
       } catch (e) {
@@ -88,8 +67,8 @@ export function UploadPage() {
     [sessionId, setSessionId, setVideos, setLoading, setUploadProgress, setError],
   );
 
-  const handleAnalyzeAndPlan = useCallback(async () => {
-    if (!sessionId || !settings.prompt.trim()) return;
+  const handleAnalyze = useCallback(async () => {
+    if (!sessionId) return;
     setError(null);
     clearLogs();
     setPhase("analyzing");
@@ -101,23 +80,19 @@ export function UploadPage() {
       setError(e instanceof Error ? e.message : String(e));
       setPhase("idle");
     }
-  }, [sessionId, settings, clearLogs, setLoading, setError]);
-
-  const canAnalyze = videos.length > 0 && settings.prompt.trim().length > 0;
+  }, [sessionId, settings.gemini_model, clearLogs, setLoading, setError]);
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Create a Reel</h1>
+        <h1 className="text-2xl font-bold">Upload Videos</h1>
         <p className="text-sm text-text-muted">
-          Upload your videos, set your direction, and let AI generate an editing plan you can customize.
+          Upload your videos and let AI analyze them before you set your creative direction.
         </p>
       </div>
 
       <UploadDropzone onFiles={handleFiles} disabled={loading} />
       <VideoFileList videos={videos} />
-
-      {videos.length > 0 && <SettingsPanel />}
 
       {error && (
         <div className="flex items-center gap-2 rounded-lg bg-error/10 p-3 text-sm text-error">
@@ -127,18 +102,29 @@ export function UploadPage() {
       )}
 
       {videos.length > 0 && (
-        <button
-          onClick={handleAnalyzeAndPlan}
-          disabled={!canAnalyze || loading}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3.5 text-base font-semibold text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <Sparkles size={20} />
-          {phase === "analyzing"
-            ? "Analyzing Videos..."
-            : phase === "planning"
-              ? "Generating Plan..."
-              : "Analyze & Generate Plan"}
-        </button>
+        <div className="space-y-3">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-text-muted">
+              AI Model
+            </label>
+            <select
+              value={settings.gemini_model}
+              onChange={(e) => updateSettings({ gemini_model: e.target.value })}
+              className="w-full rounded-lg border border-border bg-surface-light px-3 py-2 text-sm text-text outline-none focus:border-primary"
+            >
+              <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+              <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+            </select>
+          </div>
+          <button
+            onClick={handleAnalyze}
+            disabled={loading}
+            className="gradient-bg flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-base font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Sparkles size={20} />
+            {phase === "analyzing" ? "Analyzing Videos..." : "Analyze Videos"}
+          </button>
+        </div>
       )}
     </div>
   );

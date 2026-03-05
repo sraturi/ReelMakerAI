@@ -4,11 +4,13 @@ import type { SessionSettings } from "../types";
 export async function enhancePrompt(
   prompt: string,
   settings: SessionSettings,
+  sessionId?: string,
 ): Promise<string> {
   const data = await apiFetch<{ enhanced_prompt: string }>("/api/enhance-prompt", {
     method: "POST",
     body: JSON.stringify({
       prompt,
+      session_id: sessionId,
       reel_style: settings.reel_style,
       reel_approach: settings.reel_approach,
       target_duration: settings.target_duration,

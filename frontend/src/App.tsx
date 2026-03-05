@@ -1,5 +1,6 @@
 import { AppShell } from "./components/layout/AppShell";
 import { UploadPage } from "./components/upload/UploadPage";
+import { PromptPage } from "./components/prompt/PromptPage";
 import { EditorPage } from "./components/editor/EditorPage";
 import { RenderPage } from "./components/render/RenderPage";
 import { VideoPreview } from "./components/render/VideoPreview";
@@ -13,6 +14,7 @@ export default function App() {
     <AppShell>
       {step === "upload" && <UploadPage />}
       {step === "analyze" && <UploadPage />}
+      {step === "prompt" && <PromptPage />}
       {step === "edit" && <EditorPage />}
       {step === "render" && <RenderPage />}
       {step === "preview" && <VideoPreview />}

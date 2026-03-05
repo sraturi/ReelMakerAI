@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Play, Loader2, Undo2, Redo2 } from "lucide-react";
 import { ClipCardList } from "./ClipCardList";
 import { ClipDetailPanel } from "./ClipDetailPanel";

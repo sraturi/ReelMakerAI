@@ -96,4 +96,4 @@ export interface CaptionSuggestion {
   tone: string;
 }
 
-export type Step = "upload" | "analyze" | "edit" | "render" | "preview";
+export type Step = "upload" | "analyze" | "prompt" | "edit" | "render" | "preview";

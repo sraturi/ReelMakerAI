@@ -63,7 +63,7 @@ function Select({
   );
 }
 
-export function SettingsPanel() {
+export function SettingsPanel({ sessionId }: { sessionId?: string | null }) {
   const settings = useSessionStore((s) => s.settings);
   const update = useSessionStore((s) => s.updateSettings);
   const [enhancing, setEnhancing] = useState(false);
@@ -72,7 +72,7 @@ export function SettingsPanel() {
     if (!settings.prompt.trim() || enhancing) return;
     setEnhancing(true);
     try {
-      const enhanced = await enhancePrompt(settings.prompt, settings);
+      const enhanced = await enhancePrompt(settings.prompt, settings, sessionId ?? undefined);
       update({ prompt: enhanced });
     } catch {
       // silently fail — user can retry

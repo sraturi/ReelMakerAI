@@ -1,8 +1,11 @@
 import { create } from "zustand";
 import type { Step } from "../types";
 
+type Theme = "dark" | "light";
+
 interface UIState {
   step: Step;
+  theme: Theme;
   loading: boolean;
   loadingMessage: string;
   uploadProgress: number | null;
@@ -12,6 +15,7 @@ interface UIState {
   renderOutput: string | null;
 
   setStep: (step: Step) => void;
+  toggleTheme: () => void;
   setLoading: (loading: boolean, message?: string) => void;
   setUploadProgress: (pct: number | null) => void;
   addLog: (log: string) => void;
@@ -21,8 +25,26 @@ interface UIState {
   setRenderOutput: (url: string | null) => void;
 }
 
+function getInitialTheme(): Theme {
+  if (typeof window !== "undefined") {
+    const saved = localStorage.getItem("theme");
+    if (saved === "light" || saved === "dark") return saved;
+  }
+  return "dark";
+}
+
+function applyTheme(theme: Theme) {
+  document.documentElement.classList.toggle("light", theme === "light");
+  localStorage.setItem("theme", theme);
+}
+
+// Apply on load
+const initialTheme = getInitialTheme();
+applyTheme(initialTheme);
+
 export const useUIStore = create<UIState>((set) => ({
   step: "upload",
+  theme: initialTheme,
   loading: false,
   loadingMessage: "",
   uploadProgress: null,
@@ -32,6 +54,12 @@ export const useUIStore = create<UIState>((set) => ({
   renderOutput: null,
 
   setStep: (step) => set({ step, error: null }),
+  toggleTheme: () =>
+    set((s) => {
+      const next = s.theme === "dark" ? "light" : "dark";
+      applyTheme(next);
+      return { theme: next };
+    }),
   setLoading: (loading, message = "") =>
     set({ loading, loadingMessage: message }),
   setUploadProgress: (pct) => set({ uploadProgress: pct }),
