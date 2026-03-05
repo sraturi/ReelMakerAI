@@ -1,4 +1,4 @@
-"""Pipeline orchestrator for ReelMaker AI."""
+"""Pipeline orchestrator for Reelvo."""
 
 import logging
 import time

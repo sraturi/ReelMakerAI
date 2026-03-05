@@ -1,4 +1,4 @@
-"""CLI entry point for ReelMaker AI."""
+"""CLI entry point for Reelvo."""
 
 import argparse
 import logging
@@ -24,7 +24,7 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     parser = argparse.ArgumentParser(
-        description="ReelMaker AI - Create beat-synced reels with AI",
+        description="Reelvo - Create beat-synced reels with AI",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -144,7 +144,7 @@ Examples:
     audio_labels = {"voice": "Voice only (smart)", "original": "Original audio"}
 
     print("=" * 50)
-    print("  ReelMaker AI")
+    print("  Reelvo")
     print("=" * 50)
     print(f"  Videos: {len(video_paths)} files")
     for v in video_paths:

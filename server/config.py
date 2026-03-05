@@ -1,4 +1,4 @@
-"""Centralized configuration for ReelMaker AI."""
+"""Centralized configuration for Reelvo."""
 
 import os
 import platform
@@ -13,6 +13,7 @@ BASE_DIR = Path(__file__).parent
 OUTPUT_DIR = BASE_DIR / "output"
 UPLOAD_DIR = BASE_DIR / "uploads"
 THUMBNAIL_DIR = BASE_DIR / "thumbnails"
+DATA_DIR = BASE_DIR / "data"
 
 # Font path (platform-aware)
 _FONT_PATHS = {
@@ -62,3 +63,17 @@ MIN_BEAT_INTERVAL = 1.5  # minimum seconds between cuts
 
 # --- File types ---
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
+
+# --- Composite layouts ---
+ALLOWED_LAYOUTS = ["single", "split_v", "split_h", "pip", "grid"]
+LAYOUT_SOURCE_COUNT = {"single": 0, "split_v": 2, "split_h": 2, "pip": 2, "grid": 4}
+LAYOUT_DIMS = {
+    "split_v": (1080, 960),       # each half (top/bottom)
+    "split_h": (540, 1920),       # each half (left/right)
+    "pip_main": (1080, 1920),     # main video
+    "pip_overlay": (300, 533),    # small overlay
+    "grid": (540, 960),           # each quadrant
+}
+PIP_X, PIP_Y = 750, 1357  # overlay position (bottom-right)
+COMPOSITE_BORDER_PX = 3   # thin white divider between panels
+COMPOSITE_BORDER_COLOR = "white"

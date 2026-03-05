@@ -29,6 +29,7 @@ server/output/
 # Server runtime dirs
 server/uploads/
 server/thumbnails/
+server/data/
 
 # Test videos
 server/test-videos/

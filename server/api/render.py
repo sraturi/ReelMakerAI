@@ -56,11 +56,12 @@ async def _run_render(job_id: str, session, req: RenderRequest):
 
     try:
         from config import (
-            ALLOWED_KENBURNS, ALLOWED_TRANSITIONS, OUTPUT_DIR,
-            TRANSITION_DURATION, TRANSITION_STYLES,
+            ALLOWED_KENBURNS, ALLOWED_LAYOUTS, ALLOWED_TRANSITIONS,
+            LAYOUT_SOURCE_COUNT, OUTPUT_DIR, TRANSITION_DURATION,
+            TRANSITION_STYLES,
         )
         from ffmpeg_service import assemble_reel
-        from models import ClipPlan, EditingPlan, TextOverlay, VideoInfo
+        from models import ClipPlan, EditingPlan, SubSource, TextOverlay, VideoInfo
 
         videos = [VideoInfo(**v) for v in session.videos]
 
@@ -74,6 +75,10 @@ async def _run_render(job_id: str, session, req: RenderRequest):
             c.pop("clip_id", None)
             c.pop("thumbnail_url", None)
             c.pop("video_url", None)
+            # Strip frontend-only fields from sub_sources
+            for sub in c.get("sub_sources", []):
+                sub.pop("thumbnail_url", None)
+                sub.pop("video_url", None)
             clean_clips.append(ClipPlan(**c))
 
         # Strip frontend-only fields from overlays
@@ -96,7 +101,10 @@ async def _run_render(job_id: str, session, req: RenderRequest):
         t = 0.0
         for i, clip in enumerate(plan.clips):
             clip.timeline_start = round(t, 3)
-            t += clip.end_time - clip.start_time
+            if clip.layout != "single" and clip.sub_sources:
+                t += min(s.end_time - s.start_time for s in clip.sub_sources)
+            else:
+                t += clip.end_time - clip.start_time
             if use_transitions and i < len(plan.clips) - 1:
                 t -= TRANSITION_DURATION
         plan.total_duration = round(t, 3)
@@ -118,6 +126,31 @@ async def _run_render(job_id: str, session, req: RenderRequest):
                 clip.transition = "fade"
             elif clip.transition not in allowed_tr:
                 clip.transition = allowed_tr[0]
+
+            # Composite layout validation
+            if clip.layout not in ALLOWED_LAYOUTS:
+                clip.layout = "single"
+            expected = LAYOUT_SOURCE_COUNT.get(clip.layout, 0)
+            if expected > 0 and len(clip.sub_sources) != expected:
+                clip.layout = "single"
+                clip.sub_sources = []
+            if clip.layout != "single" and clip.sub_sources:
+                clip.ken_burns = "none"
+                valid_subs = True
+                for sub in clip.sub_sources:
+                    if sub.source_index < 0 or sub.source_index >= len(videos):
+                        valid_subs = False
+                        break
+                    sub_dur = videos[sub.source_index].duration
+                    sub.start_time = max(0.0, min(sub.start_time, sub_dur - 0.1))
+                    sub.end_time = max(sub.start_time + 0.5, min(sub.end_time, sub_dur))
+                    if sub.end_time - sub.start_time < 0.5:
+                        valid_subs = False
+                        break
+                if not valid_subs:
+                    clip.layout = "single"
+                    clip.sub_sources = []
+
             valid_clips.append(clip)
         plan.clips = valid_clips
 

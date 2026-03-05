@@ -35,6 +35,16 @@ export interface SceneAnalysisResult {
   videos: VideoAnalysis[];
 }
 
+export interface SubSource {
+  source_video: string;
+  source_index: number;
+  start_time: number;
+  end_time: number;
+  position: string;
+  thumbnail_url: string;
+  video_url: string;
+}
+
 export interface ClipPlan {
   clip_id: string;
   source_video: string;
@@ -47,6 +57,8 @@ export interface ClipPlan {
   ken_burns: string;
   thumbnail_url: string;
   video_url: string;
+  layout: string;
+  sub_sources: SubSource[];
 }
 
 export interface TextOverlay {
@@ -78,6 +90,7 @@ export interface SessionSettings {
   audio_mode: string;
   transition_style: string;
   gemini_model: string;
+  composite_layouts: string[];
 }
 
 export interface ClipSuggestion {

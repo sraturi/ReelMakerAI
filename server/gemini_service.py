@@ -21,7 +21,7 @@ from models import EditingPlan, MusicTrack, SceneAnalysisResult, VideoInfo
 
 
 def _parse_gemini_json(text: str) -> dict:
-    """Parse JSON from Gemini, tolerating trailing commas."""
+    """Parse JSON from Gemini, tolerating trailing commas and truncation."""
     # Strip markdown code fences if present
     cleaned = text.strip()
     if cleaned.startswith("```"):
@@ -29,7 +29,50 @@ def _parse_gemini_json(text: str) -> dict:
         cleaned = re.sub(r"\s*```$", "", cleaned)
     # Remove trailing commas before } or ]
     cleaned = re.sub(r",\s*([}\]])", r"\1", cleaned)
-    return json.loads(cleaned)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        repaired = cleaned
+
+        # Strip a dangling key with no value  ("key":  at end or before } / ])
+        repaired = re.sub(r',\s*"[^"]*"\s*:\s*$', "", repaired)
+
+        # Close any unterminated string
+        if repaired.count('"') % 2 == 1:
+            repaired += '"'
+
+        # Insert null for "key": } or "key": ] (missing value)
+        repaired = re.sub(r':\s*([}\]])', r": null\1", repaired)
+
+        # Remove trailing commas again
+        repaired = re.sub(r",\s*([}\]])", r"\1", repaired)
+
+        # Close open brackets/braces from inside out
+        for _ in range(10):
+            try:
+                return json.loads(repaired)
+            except json.JSONDecodeError:
+                stack = []
+                in_str = False
+                prev = ""
+                for ch in repaired:
+                    if ch == '"' and prev != '\\':
+                        in_str = not in_str
+                    if not in_str:
+                        if ch in '{[':
+                            stack.append(ch)
+                        elif ch in '}]':
+                            if stack:
+                                stack.pop()
+                    prev = ch
+                if not stack:
+                    break
+                closer = '}' if stack[-1] == '{' else ']'
+                repaired += closer
+
+        # Final cleanup pass
+        repaired = re.sub(r",\s*([}\]])", r"\1", repaired)
+        return json.loads(repaired)
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +87,7 @@ def _call_gemini(contents, *, temperature: float = 0.7, json_output: bool = Fals
     """Call Gemini with automatic retry on rate-limit (429) errors."""
     config = types.GenerateContentConfig(
         temperature=temperature,
+        max_output_tokens=65536,
         **({"response_mime_type": "application/json"} if json_output else {}),
     )
     for attempt in range(MAX_RETRIES):
@@ -277,8 +321,15 @@ Return ONLY valid JSON:
     ]
     content_parts.append(types.Part.from_text(text=analysis_prompt))
 
-    response = _call_gemini(content_parts, temperature=0.5, json_output=True)
-    return SceneAnalysisResult(**_parse_gemini_json(response.text))
+    for attempt in range(2):
+        response = _call_gemini(content_parts, temperature=0.5, json_output=True)
+        try:
+            return SceneAnalysisResult(**_parse_gemini_json(response.text))
+        except (json.JSONDecodeError, Exception) as e:
+            if attempt == 0:
+                log.warning("Pass 1 JSON parse failed (%s), retrying...", e)
+            else:
+                raise
 
 
 # ---------------------------------------------------------------------------
@@ -317,6 +368,7 @@ def create_editing_plan_from_scenes(
     target_duration: float,
     reel_style: str = "montage",
     reel_approach: str = "hook",
+    composite_layouts: list[str] | None = None,
 ) -> EditingPlan:
     """Pass 2: Create an editing plan from scene descriptions (text-only)."""
     beat_times_str = ", ".join(f"{t:.2f}" for t in beat_times)
@@ -341,6 +393,66 @@ def create_editing_plan_from_scenes(
         f"  Video {i} ({v.filename}): max {v.duration:.1f}s \u2014 start_time must be < {v.duration:.1f}, end_time must be \u2264 {v.duration:.1f}"
         for i, v in enumerate(videos)
     )
+
+    # Composite layout prompt section (only when 2+ videos AND user checked at least one layout)
+    allowed = [l for l in (composite_layouts or []) if l in ("split_v", "split_h", "pip", "grid")]
+    if len(videos) >= 2 and allowed:
+        layout_descriptions = {
+            "split_v": '   - "split_v": top/bottom \u2014 comparisons, before/after',
+            "split_h": '   - "split_h": left/right \u2014 side-by-side',
+            "pip": '   - "pip": picture-in-picture \u2014 reaction/commentary over main',
+            "grid": '   - "grid": 2x2 \u2014 montage of 4 quick moments (needs 4+ source videos)',
+        }
+        layout_lines = "\n".join(layout_descriptions[l] for l in allowed)
+        # Build a concrete example for the first allowed layout
+        example_layout = allowed[0]
+        if example_layout in ("split_v", "split_h", "pip"):
+            example_positions = {"split_v": ("top", "bottom"), "split_h": ("left", "right"), "pip": ("main", "overlay")}
+            p0, p1 = example_positions[example_layout]
+            composite_example = (
+                f'      "layout": "{example_layout}",\n'
+                f'      "sub_sources": [\n'
+                f'        {{"source_video": "<file1>", "source_index": 0, "start_time": 2.0, "end_time": 5.0, "position": "{p0}"}},\n'
+                f'        {{"source_video": "<file2>", "source_index": 1, "start_time": 1.0, "end_time": 4.0, "position": "{p1}"}}\n'
+                f'      ]'
+            )
+        else:  # grid
+            composite_example = (
+                f'      "layout": "grid",\n'
+                f'      "sub_sources": [\n'
+                f'        {{"source_video": "<file1>", "source_index": 0, "start_time": 0.0, "end_time": 3.0, "position": "tl"}},\n'
+                f'        {{"source_video": "<file2>", "source_index": 1, "start_time": 0.0, "end_time": 3.0, "position": "tr"}},\n'
+                f'        {{"source_video": "<file1>", "source_index": 0, "start_time": 5.0, "end_time": 8.0, "position": "bl"}},\n'
+                f'        {{"source_video": "<file2>", "source_index": 1, "start_time": 3.0, "end_time": 6.0, "position": "br"}}\n'
+                f'      ]'
+            )
+
+        composite_section = f"""8. COMPOSITE LAYOUTS \u2014 REQUIRED: You MUST include at least 1 composite clip using the layouts below:
+   The user has specifically requested these multi-video layouts:
+{layout_lines}
+
+   ONLY use the layout types listed above. Do NOT use any other layout types.
+   You MUST include at least {min(len(allowed), 3)} composite clip(s) — use a DIFFERENT layout for each.
+   Try to use each of the listed layouts at least once.
+   Pick moments where the effect makes sense (comparisons, reactions, simultaneous moments).
+
+   For composite clips, set clip.layout and clip.sub_sources (array of objects).
+   Each sub_source: {{"source_video": "<filename>", "source_index": <int>, "start_time": <float>, "end_time": <float>, "position": "<pos>"}}
+   Positions: split_v \u2192 top/bottom, split_h \u2192 left/right, pip \u2192 main/overlay, grid \u2192 tl/tr/bl/br
+   Sub-sources MUST have the same duration (trim to match). Use different source videos for each sub-source.
+   Don't use composites for the opening clip (clip 0).
+   For composite clips, source_video/source_index/start_time/end_time refer to the first sub-source.
+
+   Example composite clip:
+   {{
+      "source_video": "<file1>", "source_index": 0, "start_time": 2.0, "end_time": 5.0,
+      "timeline_start": 6.0, "audio": "mute", "transition": "fade", "ken_burns": "none",
+{composite_example}
+   }}
+
+"""
+    else:
+        composite_section = ""
 
     edit_prompt = f"""You are an expert short-form video editor (Instagram Reels / TikTok).
 
@@ -414,7 +526,7 @@ YOUR JOB \u2014 build a reel that fulfills the PRIMARY GOAL above:
    - Did you include *** PEAK MOMENT *** scenes?
    - Does the reel tell a coherent story or does it feel like random clips?
 
-CONSTRAINTS:
+{composite_section}CONSTRAINTS:
 - DURATION: {target_duration:.1f}s is the MINIMUM. You may go up to {target_duration * 1.25:.1f}s.
   Aim for {target_duration:.1f}s\u2013{target_duration * 1.25:.1f}s total. Use as much good footage as possible.
   If your clips add up to less than {target_duration:.1f}s, add more clips or use longer clips.
@@ -442,7 +554,9 @@ Return ONLY valid JSON:
       "timeline_start": <number>,
       "audio": "keep_audio|mute",
       "transition": "fade|fadeblack|dissolve|wipeleft|wiperight|slideup|slideleft|circleopen|radial",
-      "ken_burns": "none|zoom_in|zoom_out|pan_left|pan_right"
+      "ken_burns": "none|zoom_in|zoom_out|pan_left|pan_right",
+      "layout": "single|split_v|split_h|pip|grid",
+      "sub_sources": ["... array of sub_source objects, empty for single layout"]
     }}
   ],
   "text_overlays": [
@@ -458,8 +572,15 @@ Return ONLY valid JSON:
   ]
 }}"""
 
-    response = _call_gemini(edit_prompt, temperature=0.7, json_output=True)
-    return EditingPlan(**_parse_gemini_json(response.text))
+    for attempt in range(2):
+        response = _call_gemini(edit_prompt, temperature=0.7, json_output=True)
+        try:
+            return EditingPlan(**_parse_gemini_json(response.text))
+        except (json.JSONDecodeError, Exception) as e:
+            if attempt == 0:
+                log.warning("Pass 2 JSON parse failed (%s), retrying...", e)
+            else:
+                raise
 
 
 # ---------------------------------------------------------------------------

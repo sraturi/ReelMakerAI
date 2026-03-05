@@ -84,7 +84,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       let t = 0;
       for (const c of clips) {
         c.timeline_start = Math.round(t * 1000) / 1000;
-        t += c.end_time - c.start_time;
+        if (c.layout && c.layout !== "single" && c.sub_sources?.length > 0) {
+          t += Math.min(...c.sub_sources.map((s) => s.end_time - s.start_time));
+        } else {
+          t += c.end_time - c.start_time;
+        }
       }
       return { ...pushHistory(s), clips };
     }),

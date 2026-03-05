@@ -1,4 +1,4 @@
-"""FastAPI web frontend for ReelMaker AI."""
+"""FastAPI web frontend for Reelvo."""
 
 import asyncio
 import logging
@@ -22,7 +22,7 @@ from config import OUTPUT_DIR, UPLOAD_DIR, THUMBNAIL_DIR, VIDEO_EXTENSIONS
 # App setup
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="ReelMaker AI")
+app = FastAPI(title="Reelvo")
 
 # CORS for React dev server
 app.add_middleware(
@@ -111,7 +111,7 @@ async def generate(
     gemini_model: str = Form("gemini-2.5-flash"),
 ):
     """Accept form + uploaded videos, start pipeline in background, return job_id."""
-    tmp_dir = tempfile.mkdtemp(prefix="reelmaker_")
+    tmp_dir = tempfile.mkdtemp(prefix="reelvo_")
     video_paths: list[str] = []
 
     for upload in videos:

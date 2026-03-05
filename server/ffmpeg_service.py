@@ -7,15 +7,21 @@ from pathlib import Path
 
 from config import (
     ALLOWED_KENBURNS,
+    ALLOWED_LAYOUTS,
     ALLOWED_TRANSITIONS,
     AUDIO_SAMPLE_RATE,
+    COMPOSITE_BORDER_COLOR,
+    COMPOSITE_BORDER_PX,
     FONT_PATH,
     KENBURNS_SCALE,
+    LAYOUT_DIMS,
     OUTPUT_HEIGHT,
     OUTPUT_WIDTH,
+    PIP_X,
+    PIP_Y,
     TRANSITION_DURATION,
 )
-from models import ClipPlan, EditingPlan, VideoInfo
+from models import ClipPlan, EditingPlan, SubSource, VideoInfo
 
 log = logging.getLogger(__name__)
 
@@ -211,6 +217,135 @@ def _build_kenburns_filter(
     ]
 
 
+def _build_composite_filter(
+    clip: ClipPlan,
+    clip_index: int,
+    input_indices: dict[int, int],
+    audio_mode: str,
+) -> tuple[list[str], str, str]:
+    """
+    Build filter chain for a composite layout clip.
+
+    Returns (filter_lines, video_label, audio_label).
+    """
+    layout = clip.layout
+    subs = clip.sub_sources
+    filters: list[str] = []
+    sr = AUDIO_SAMPLE_RATE
+    prefix = f"comp{clip_index}"
+
+    # All sub-sources must have the exact same duration to avoid
+    # overlay disappearing early or xfade glitches at the seam
+    min_dur = min(sub.end_time - sub.start_time for sub in subs)
+
+    # Trim and scale each sub-source (clamped to min_dur)
+    sub_labels: list[str] = []
+    for j, sub in enumerate(subs):
+        src_idx = input_indices[sub.source_index]
+        vl = f"{prefix}_v{j}"
+        sl = f"{prefix}_s{j}"
+        sub_end = sub.start_time + min_dur  # clamp to shared duration
+
+        # Determine target size for this sub
+        if layout == "split_v":
+            w, h = LAYOUT_DIMS["split_v"]
+        elif layout == "split_h":
+            w, h = LAYOUT_DIMS["split_h"]
+        elif layout == "pip":
+            if j == 0:  # main
+                w, h = LAYOUT_DIMS["pip_main"]
+            else:  # overlay
+                w, h = LAYOUT_DIMS["pip_overlay"]
+        elif layout == "grid":
+            w, h = LAYOUT_DIMS["grid"]
+        else:
+            w, h = OUTPUT_WIDTH, OUTPUT_HEIGHT
+
+        filters.append(
+            f"[{src_idx}:v]trim=start={sub.start_time:.3f}:end={sub_end:.3f},"
+            f"setpts=PTS-STARTPTS[{vl}]"
+        )
+        filters.append(
+            f"[{vl}]scale={w}:{h}:force_original_aspect_ratio=increase,"
+            f"crop={w}:{h},setsar=1,fps=30[{sl}]"
+        )
+        sub_labels.append(sl)
+
+    # Compose based on layout, then draw thin border lines at seams
+    bw = COMPOSITE_BORDER_PX
+    bc = COMPOSITE_BORDER_COLOR
+    out_v = f"{prefix}_out"
+    raw_v = f"{prefix}_raw"
+
+    if layout == "split_v":
+        # Horizontal seam at y = 960 (midpoint)
+        seam_y = LAYOUT_DIMS["split_v"][1] - bw // 2
+        filters.append(
+            f"[{sub_labels[0]}][{sub_labels[1]}]vstack=inputs=2[{raw_v}]"
+        )
+        filters.append(
+            f"[{raw_v}]drawbox=x=0:y={seam_y}:w={OUTPUT_WIDTH}:h={bw}:"
+            f"color={bc}:t=fill[{out_v}]"
+        )
+    elif layout == "split_h":
+        # Vertical seam at x = 540 (midpoint)
+        seam_x = LAYOUT_DIMS["split_h"][0] - bw // 2
+        filters.append(
+            f"[{sub_labels[0]}][{sub_labels[1]}]hstack=inputs=2[{raw_v}]"
+        )
+        filters.append(
+            f"[{raw_v}]drawbox=x={seam_x}:y=0:w={bw}:h={OUTPUT_HEIGHT}:"
+            f"color={bc}:t=fill[{out_v}]"
+        )
+    elif layout == "pip":
+        # Border outline around the overlay window
+        ow, oh = LAYOUT_DIMS["pip_overlay"]
+        filters.append(
+            f"[{sub_labels[0]}][{sub_labels[1]}]overlay=x={PIP_X}:y={PIP_Y}[{raw_v}]"
+        )
+        filters.append(
+            f"[{raw_v}]drawbox=x={PIP_X}:y={PIP_Y}:w={ow}:h={oh}:"
+            f"color={bc}:t={bw}[{out_v}]"
+        )
+    elif layout == "grid":
+        # Cross: vertical line at x=540, horizontal at y=960
+        gw, gh = LAYOUT_DIMS["grid"]
+        seam_x = gw - bw // 2
+        seam_y = gh - bw // 2
+        mid_v = f"{prefix}_gmid"
+        filters.append(
+            f"[{sub_labels[0]}][{sub_labels[1]}][{sub_labels[2]}][{sub_labels[3]}]"
+            f"xstack=inputs=4:layout=0_0|{gw}_0|0_{gh}|{gw}_{gh}[{raw_v}]"
+        )
+        filters.append(
+            f"[{raw_v}]drawbox=x={seam_x}:y=0:w={bw}:h={OUTPUT_HEIGHT}:"
+            f"color={bc}:t=fill[{mid_v}]"
+        )
+        filters.append(
+            f"[{mid_v}]drawbox=x=0:y={seam_y}:w={OUTPUT_WIDTH}:h={bw}:"
+            f"color={bc}:t=fill[{out_v}]"
+        )
+
+    # Audio: use first sub-source's audio, clamped to min_dur
+    a_label = f"{prefix}_a"
+    first_sub = subs[0]
+    audio_end = first_sub.start_time + min_dur
+    src_idx = input_indices[first_sub.source_index]
+
+    if clip.audio == "mute" and audio_mode != "original":
+        filters.append(
+            f"aevalsrc=0:d={min_dur:.3f},"
+            f"aformat=sample_rates={sr}:channel_layouts=stereo[{a_label}]"
+        )
+    else:
+        filters.append(
+            f"[{src_idx}:a]atrim=start={first_sub.start_time:.3f}:end={audio_end:.3f},"
+            f"asetpts=PTS-STARTPTS[{a_label}]"
+        )
+
+    return filters, out_v, a_label
+
+
 def build_ffmpeg_command(
     plan: EditingPlan,
     videos: list[VideoInfo],
@@ -231,10 +366,17 @@ def build_ffmpeg_command(
     input_indices: dict[int, int] = {}
     ffmpeg_idx = 0
     for clip in plan.clips:
+        # Main source
         if clip.source_index not in input_indices:
             cmd.extend(["-i", videos[clip.source_index].path])
             input_indices[clip.source_index] = ffmpeg_idx
             ffmpeg_idx += 1
+        # Sub-sources for composite layouts
+        for sub in clip.sub_sources:
+            if sub.source_index not in input_indices:
+                cmd.extend(["-i", videos[sub.source_index].path])
+                input_indices[sub.source_index] = ffmpeg_idx
+                ffmpeg_idx += 1
 
     # --- Build filter_complex ---
     filters = []
@@ -243,42 +385,64 @@ def build_ffmpeg_command(
     sr = AUDIO_SAMPLE_RATE
 
     for i, clip in enumerate(plan.clips):
-        src_idx = input_indices[clip.source_index]
-        v_clip = f"vclip{i}"
         v_scaled = f"vscaled{i}"
         a_clip = f"aclip{i}"
 
-        # Trim video
-        filters.append(
-            f"[{src_idx}:v]trim=start={clip.start_time:.3f}:end={clip.end_time:.3f},"
-            f"setpts=PTS-STARTPTS[{v_clip}]"
+        is_composite = (
+            clip.layout in ALLOWED_LAYOUTS
+            and clip.layout != "single"
+            and len(clip.sub_sources) >= 2
         )
 
-        # Scale/crop with optional Ken Burns effect
-        filters.extend(_build_kenburns_filter(clip, v_clip, v_scaled))
-
-        # Per-clip audio
-        # "original" keeps all audio; "voice" respects Gemini mute flags
-        clip_dur = clip.end_time - clip.start_time
-        if clip.audio == "mute" and audio_mode != "original":
-            filters.append(
-                f"aevalsrc=0:d={clip_dur:.3f},"
-                f"aformat=sample_rates={sr}:channel_layouts=stereo[{a_clip}]"
+        if is_composite:
+            # Composite layout: build multi-source filter
+            comp_filters, comp_v, comp_a = _build_composite_filter(
+                clip, i, input_indices, audio_mode
             )
+            filters.extend(comp_filters)
+            # Ensure consistent fps + reset PTS for xfade compatibility
+            filters.append(f"[{comp_v}]fps=30,setpts=PTS-STARTPTS[{v_scaled}]")
+            filters.append(f"[{comp_a}]asetpts=PTS-STARTPTS[{a_clip}]")
         else:
-            filters.append(
-                f"[{src_idx}:a]atrim=start={clip.start_time:.3f}:end={clip.end_time:.3f},"
-                f"asetpts=PTS-STARTPTS[{a_clip}]"
-            )
-        audio_concat_inputs.append(f"[{a_clip}]")
+            # Standard single-source clip
+            src_idx = input_indices[clip.source_index]
+            v_clip = f"vclip{i}"
 
+            # Trim video
+            filters.append(
+                f"[{src_idx}:v]trim=start={clip.start_time:.3f}:end={clip.end_time:.3f},"
+                f"setpts=PTS-STARTPTS[{v_clip}]"
+            )
+
+            # Scale/crop with optional Ken Burns effect
+            filters.extend(_build_kenburns_filter(clip, v_clip, v_scaled))
+
+            # Per-clip audio
+            clip_dur = clip.end_time - clip.start_time
+            if clip.audio == "mute" and audio_mode != "original":
+                filters.append(
+                    f"aevalsrc=0:d={clip_dur:.3f},"
+                    f"aformat=sample_rates={sr}:channel_layouts=stereo[{a_clip}]"
+                )
+            else:
+                filters.append(
+                    f"[{src_idx}:a]atrim=start={clip.start_time:.3f}:end={clip.end_time:.3f},"
+                    f"asetpts=PTS-STARTPTS[{a_clip}]"
+                )
+
+        audio_concat_inputs.append(f"[{a_clip}]")
         video_concat_inputs.append(f"[{v_scaled}]")
 
     # Join video clips (xfade transitions or hard concat)
     n_clips = len(plan.clips)
     T = TRANSITION_DURATION
     use_xfade = transition_style != "cut" and n_clips > 1
-    clip_durations = [c.end_time - c.start_time for c in plan.clips]
+    def _clip_duration(c: ClipPlan) -> float:
+        if c.layout != "single" and c.sub_sources:
+            return min(s.end_time - s.start_time for s in c.sub_sources)
+        return c.end_time - c.start_time
+
+    clip_durations = [_clip_duration(c) for c in plan.clips]
 
     if n_clips == 1:
         lbl = video_concat_inputs[0].strip("[]")

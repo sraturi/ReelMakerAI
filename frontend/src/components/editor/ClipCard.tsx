@@ -2,7 +2,15 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { GripVertical, Sparkles, Trash2, Volume2, VolumeX } from "lucide-react";
 import { VideoClipPlayer } from "../shared/VideoClipPlayer";
+import { CompositePreview } from "./CompositePreview";
 import type { ClipPlan } from "../../types";
+
+const LAYOUT_LABELS: Record<string, string> = {
+  split_v: "Split V",
+  split_h: "Split H",
+  pip: "PiP",
+  grid: "Grid",
+};
 
 interface Props {
   clip: ClipPlan;
@@ -35,7 +43,10 @@ export function ClipCard({
     transition,
   };
 
-  const duration = (clip.end_time - clip.start_time).toFixed(1);
+  const isComposite = clip.layout && clip.layout !== "single" && clip.sub_sources?.length > 0;
+  const duration = isComposite
+    ? Math.min(...clip.sub_sources.map((s) => s.end_time - s.start_time)).toFixed(1)
+    : (clip.end_time - clip.start_time).toFixed(1);
 
   return (
     <div
@@ -59,15 +70,23 @@ export function ClipCard({
         <GripVertical size={18} />
       </button>
 
-      {/* Video preview — plays on hover */}
-      <VideoClipPlayer
-        videoUrl={clip.video_url}
-        startTime={clip.start_time}
-        endTime={clip.end_time}
-        thumbnailUrl={clip.thumbnail_url}
-        mode="hover"
-        className="h-16 w-10 flex-shrink-0 rounded"
-      />
+      {/* Video preview — plays on hover (single) or composite thumbnail */}
+      {isComposite ? (
+        <CompositePreview
+          layout={clip.layout}
+          subSources={clip.sub_sources}
+          className="h-16 w-10 flex-shrink-0"
+        />
+      ) : (
+        <VideoClipPlayer
+          videoUrl={clip.video_url}
+          startTime={clip.start_time}
+          endTime={clip.end_time}
+          thumbnailUrl={clip.thumbnail_url}
+          mode="hover"
+          className="h-16 w-10 flex-shrink-0 rounded"
+        />
+      )}
 
       {/* Info */}
       <div className="flex-1 min-w-0">
@@ -87,6 +106,11 @@ export function ClipCard({
           {clip.ken_burns !== "none" && (
             <span className="rounded bg-accent/20 px-1.5 py-0.5 text-[10px] font-medium text-accent">
               {clip.ken_burns}
+            </span>
+          )}
+          {isComposite && (
+            <span className="rounded bg-primary/20 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+              {LAYOUT_LABELS[clip.layout] || clip.layout}
             </span>
           )}
           {clip.audio === "keep_audio" ? (

@@ -1,4 +1,4 @@
-"""Pydantic models for the ReelMaker AI editing pipeline."""
+"""Pydantic models for the Reelvo editing pipeline."""
 
 from pydantic import BaseModel, Field
 
@@ -20,6 +20,18 @@ class TextOverlay(BaseModel):
     )
 
 
+class SubSource(BaseModel):
+    """A sub-source video for composite layouts (split screen, PiP, grid)."""
+    source_video: str = Field(description="Filename of the source video")
+    source_index: int = Field(description="Index of the source video in the input list")
+    start_time: float = Field(description="Start time in source video (seconds)")
+    end_time: float = Field(description="End time in source video (seconds)")
+    position: str = Field(
+        default="auto",
+        description="Position: top/bottom, left/right, main/overlay, tl/tr/bl/br"
+    )
+
+
 class ClipPlan(BaseModel):
     """A single clip segment in the editing plan."""
     source_video: str = Field(description="Filename of the source video")
@@ -38,6 +50,14 @@ class ClipPlan(BaseModel):
     ken_burns: str = Field(
         default="none",
         description="Ken Burns effect on this clip: none, zoom_in, zoom_out, pan_left, pan_right"
+    )
+    layout: str = Field(
+        default="single",
+        description="Layout: single, split_v, split_h, pip, grid"
+    )
+    sub_sources: list[SubSource] = Field(
+        default_factory=list,
+        description="Sub-sources for composite layouts (empty for single)"
     )
 
 
@@ -131,6 +151,7 @@ class PlanRequest(BaseModel):
     audio_mode: str = "voice"
     transition_style: str = "auto"
     gemini_model: str = "gemini-2.5-flash"
+    composite_layouts: list[str] = Field(default_factory=list)
 
 
 class ReplanRequest(BaseModel):
@@ -145,6 +166,8 @@ class ReplanRequest(BaseModel):
     captions: bool = True
     audio_mode: str = "voice"
     transition_style: str = "auto"
+    gemini_model: str = "gemini-2.5-flash"
+    composite_layouts: list[str] = Field(default_factory=list)
 
 
 class SuggestClipRequest(BaseModel):

@@ -67,12 +67,17 @@ async def _run_analyze(job_id: str, session, gemini_model: str):
 
         videos = [VideoInfo(**v) for v in session.videos]
 
-        analyze_jobs[job_id]["logs"].append("Uploading videos to Gemini...")
-
+        total = len(videos)
         uploaded_files = []
-        for video in videos:
+        for i, video in enumerate(videos, 1):
+            analyze_jobs[job_id]["logs"].append(
+                f"Uploading video {i}/{total}: {video.filename}"
+            )
             uploaded_files.append(
                 await asyncio.to_thread(upload_video, video.path)
+            )
+            analyze_jobs[job_id]["logs"].append(
+                f"Uploaded {i}/{total}: {video.filename}"
             )
 
         analyze_jobs[job_id]["logs"].append("Analyzing video scenes (Pass 1)...")

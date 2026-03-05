@@ -69,6 +69,8 @@ async def replan(req: ReplanRequest):
         captions=req.captions,
         audio_mode=req.audio_mode,
         transition_style=req.transition_style,
+        gemini_model=req.gemini_model,
+        composite_layouts=req.composite_layouts,
     )
 
     job_id = uuid.uuid4().hex[:12]
@@ -98,6 +100,9 @@ async def _run_plan(job_id: str, session, req: PlanRequest):
     root_logger.addHandler(handler)
 
     try:
+        import config
+        config.GEMINI_MODEL = req.gemini_model
+
         from beat_detection import beats_from_bpm
         from gemini_service import create_editing_plan_from_scenes
         from models import MusicTrack, VideoInfo
@@ -124,12 +129,13 @@ async def _run_plan(job_id: str, session, req: PlanRequest):
             target_duration=target_duration,
             reel_style=req.reel_style,
             reel_approach=req.reel_approach,
+            composite_layouts=req.composite_layouts,
         )
 
         # Post-process plan (same validation as pipeline.py)
         from config import (
-            ALLOWED_KENBURNS, ALLOWED_TRANSITIONS, TRANSITION_DURATION,
-            TRANSITION_STYLES,
+            ALLOWED_KENBURNS, ALLOWED_LAYOUTS, ALLOWED_TRANSITIONS,
+            LAYOUT_SOURCE_COUNT, TRANSITION_DURATION, TRANSITION_STYLES,
         )
         plan.clips.sort(key=lambda c: c.timeline_start)
 
@@ -151,6 +157,31 @@ async def _run_plan(job_id: str, session, req: PlanRequest):
                 clip.transition = "fade"
             elif clip.transition not in allowed_tr:
                 clip.transition = allowed_tr[0]
+
+            # Composite layout validation
+            if clip.layout not in ALLOWED_LAYOUTS:
+                clip.layout = "single"
+            expected = LAYOUT_SOURCE_COUNT.get(clip.layout, 0)
+            if expected > 0 and len(clip.sub_sources) != expected:
+                clip.layout = "single"
+                clip.sub_sources = []
+            if clip.layout != "single" and clip.sub_sources:
+                clip.ken_burns = "none"
+                valid_subs = True
+                for sub in clip.sub_sources:
+                    if sub.source_index < 0 or sub.source_index >= len(videos):
+                        valid_subs = False
+                        break
+                    sub_dur = videos[sub.source_index].duration
+                    sub.start_time = max(0.0, min(sub.start_time, sub_dur - 0.1))
+                    sub.end_time = max(sub.start_time + 0.5, min(sub.end_time, sub_dur))
+                    if sub.end_time - sub.start_time < 0.5:
+                        valid_subs = False
+                        break
+                if not valid_subs:
+                    clip.layout = "single"
+                    clip.sub_sources = []
+
             valid_clips.append(clip)
         plan.clips = valid_clips
 
@@ -159,7 +190,10 @@ async def _run_plan(job_id: str, session, req: PlanRequest):
         t = 0.0
         for i, clip in enumerate(plan.clips):
             clip.timeline_start = round(t, 3)
-            t += clip.end_time - clip.start_time
+            if clip.layout != "single" and clip.sub_sources:
+                t += min(s.end_time - s.start_time for s in clip.sub_sources)
+            else:
+                t += clip.end_time - clip.start_time
             if use_transitions and i < len(plan.clips) - 1:
                 t -= TRANSITION_DURATION
         plan.total_duration = round(t, 3)
@@ -178,6 +212,15 @@ async def _run_plan(job_id: str, session, req: PlanRequest):
             clip["video_url"] = (
                 f"/api/video/{session.session_id}/{clip['source_index']}"
             )
+            # Add thumbnail/video URLs to sub-sources
+            for sub in clip.get("sub_sources", []):
+                sub_mid = (sub["start_time"] + sub["end_time"]) / 2
+                sub["thumbnail_url"] = (
+                    f"/api/thumbnail/{session.session_id}/{sub['source_index']}/{sub_mid:.2f}"
+                )
+                sub["video_url"] = (
+                    f"/api/video/{session.session_id}/{sub['source_index']}"
+                )
 
         for i, overlay in enumerate(plan_dict["text_overlays"]):
             overlay["overlay_id"] = f"overlay-{i}"

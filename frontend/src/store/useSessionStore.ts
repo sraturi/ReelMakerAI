@@ -31,6 +31,7 @@ const defaultSettings: SessionSettings = {
   audio_mode: "voice",
   transition_style: "auto",
   gemini_model: "gemini-2.5-flash",
+  composite_layouts: [],
 };
 
 export const useSessionStore = create<SessionState>((set) => ({

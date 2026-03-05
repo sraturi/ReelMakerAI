@@ -164,6 +164,41 @@ export function SettingsPanel({ sessionId }: { sessionId?: string | null }) {
         </label>
       </div>
 
+      {/* Composite layouts */}
+      <div>
+        <label className="mb-1.5 block text-xs font-medium text-text-muted">
+          Composite Layouts (AI may add 0–2 per reel)
+        </label>
+        <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+          {([
+            { value: "split_v", label: "Top / Bottom" },
+            { value: "split_h", label: "Left / Right" },
+            { value: "pip", label: "Picture-in-Picture" },
+            { value: "grid", label: "2\u00d72 Grid" },
+          ] as const).map(({ value: v, label }) => {
+            const checked = (settings.composite_layouts ?? []).includes(v);
+            return (
+              <label key={v} className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => {
+                    const cur = settings.composite_layouts ?? [];
+                    update({
+                      composite_layouts: checked
+                        ? cur.filter((l) => l !== v)
+                        : [...cur, v],
+                    });
+                  }}
+                  className="accent-primary"
+                />
+                {label}
+              </label>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Prompt — last so user sets preferences first, then AI can use them */}
       <div>
         <div className="mb-1 flex items-center justify-between">

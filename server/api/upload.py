@@ -61,8 +61,8 @@ async def upload_videos(
 
         new_videos_info.append(info_dict)
 
-    session.video_paths.extend(new_paths)
-    session.videos.extend(new_videos_info)
+    session.video_paths = session.video_paths + new_paths
+    session.videos = session.videos + new_videos_info
 
     log.info(
         "Session %s: added %d videos (total %d)",
