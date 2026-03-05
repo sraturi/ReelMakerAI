@@ -21,6 +21,7 @@ class EnhanceRequest(BaseModel):
     captions: bool = True
     audio_mode: str = "voice"
     transition_style: str = "auto"
+    gemini_model: str = ""
 
 
 @router.post("/enhance-prompt")
@@ -91,5 +92,9 @@ User's prompt: {req.prompt}
 
 Enhanced prompt:"""
 
-    response = _call_gemini(system_prompt, temperature=0.8)
+    response = _call_gemini(
+        system_prompt, temperature=0.8,
+        model=req.gemini_model or None,
+        max_output_tokens=1024, thinking_budget=0,
+    )
     return response.text.strip()

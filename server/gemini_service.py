@@ -74,6 +74,55 @@ def _parse_gemini_json(text: str) -> dict:
         repaired = re.sub(r",\s*([}\]])", r"\1", repaired)
         return json.loads(repaired)
 
+def _truncate_to_last_complete(text: str) -> dict | None:
+    """Try to salvage truncated JSON by finding the last complete array element.
+
+    Looks for the last '},' which marks a finished object in an array,
+    truncates there, and closes all open brackets.  Returns the parsed
+    dict on success, or None.
+    """
+    # Strip markdown fences
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+
+    # Find last complete array element boundary
+    last_obj_end = cleaned.rfind("},")
+    if last_obj_end == -1:
+        return None
+
+    truncated = cleaned[: last_obj_end + 1]  # include the closing }
+
+    # Remove trailing commas
+    truncated = re.sub(r",\s*$", "", truncated)
+
+    # Close any remaining open brackets/braces
+    for _ in range(20):
+        try:
+            return json.loads(truncated)
+        except json.JSONDecodeError:
+            stack = []
+            in_str = False
+            prev = ""
+            for ch in truncated:
+                if ch == '"' and prev != '\\':
+                    in_str = not in_str
+                if not in_str:
+                    if ch in '{[':
+                        stack.append(ch)
+                    elif ch in '}]':
+                        if stack:
+                            stack.pop()
+                prev = ch
+            if not stack:
+                return None
+            closer = '}' if stack[-1] == '{' else ']'
+            truncated += closer
+
+    return None
+
+
 log = logging.getLogger(__name__)
 
 client = genai.Client(api_key=GEMINI_API_KEY)
@@ -83,13 +132,22 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 # Gemini helpers
 # ---------------------------------------------------------------------------
 
-def _call_gemini(contents, *, temperature: float = 0.7, json_output: bool = False, model: str | None = None):
+def _call_gemini(
+    contents,
+    *,
+    temperature: float = 0.7,
+    json_output: bool = False,
+    model: str | None = None,
+    max_output_tokens: int = 65536,
+    thinking_budget: int | None = None,
+):
     """Call Gemini with automatic retry on rate-limit (429) errors."""
     model = model or GEMINI_MODEL
     gen_config = types.GenerateContentConfig(
         temperature=temperature,
-        max_output_tokens=65536,
+        max_output_tokens=max_output_tokens,
         **({"response_mime_type": "application/json"} if json_output else {}),
+        **({"thinking_config": types.ThinkingConfig(thinking_budget=thinking_budget)} if thinking_budget is not None else {}),
     )
     for attempt in range(MAX_RETRIES):
         try:
@@ -324,12 +382,21 @@ Return ONLY valid JSON:
     content_parts.append(types.Part.from_text(text=analysis_prompt))
 
     for attempt in range(2):
-        response = _call_gemini(content_parts, temperature=0.5, json_output=True, model=model)
+        response = _call_gemini(
+            content_parts, temperature=0.5, json_output=True, model=model,
+            max_output_tokens=16384,
+        )
         try:
             return SceneAnalysisResult(**_parse_gemini_json(response.text))
         except (json.JSONDecodeError, Exception) as e:
             if attempt == 0:
-                log.warning("Pass 1 JSON parse failed (%s), retrying...", e)
+                log.warning("Pass 1 JSON parse failed (%s), trying truncation repair...", e)
+                repaired = _truncate_to_last_complete(response.text)
+                if repaired is not None:
+                    try:
+                        return SceneAnalysisResult(**repaired)
+                    except Exception:
+                        log.warning("Truncation repair failed, re-calling Gemini...")
             else:
                 raise
 
@@ -576,12 +643,22 @@ Return ONLY valid JSON:
 }}"""
 
     for attempt in range(2):
-        response = _call_gemini(edit_prompt, temperature=0.7, json_output=True, model=model)
+        response = _call_gemini(
+            edit_prompt, temperature=0.7 if attempt == 0 else 0.3,
+            json_output=True, model=model,
+            max_output_tokens=16384,
+        )
         try:
             return EditingPlan(**_parse_gemini_json(response.text))
         except (json.JSONDecodeError, Exception) as e:
             if attempt == 0:
-                log.warning("Pass 2 JSON parse failed (%s), retrying...", e)
+                log.warning("Pass 2 JSON parse failed (%s), trying truncation repair...", e)
+                repaired = _truncate_to_last_complete(response.text)
+                if repaired is not None:
+                    try:
+                        return EditingPlan(**repaired)
+                    except Exception:
+                        log.warning("Truncation repair failed, re-calling Gemini with lower temperature...")
             else:
                 raise
 

@@ -51,7 +51,9 @@ Return ONLY valid JSON:
         from gemini_service import _call_gemini
 
         response = await asyncio.to_thread(
-            _call_gemini, prompt, temperature=0.9, json_output=True
+            _call_gemini, prompt, temperature=0.9, json_output=True,
+            model=req.gemini_model or None,
+            max_output_tokens=1024, thinking_budget=0,
         )
         return json.loads(response.text)
 

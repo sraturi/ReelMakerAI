@@ -58,6 +58,11 @@ def probe_video(video_path: str) -> VideoInfo:
 
     duration = float(data["format"]["duration"])
 
+    # Detect audio stream
+    has_audio = any(
+        s["codec_type"] == "audio" for s in data.get("streams", [])
+    )
+
     # Extract rotation from side_data_list or tags
     rotation = 0
     for sd in video_stream.get("side_data_list", []):
@@ -69,6 +74,8 @@ def probe_video(video_path: str) -> VideoInfo:
 
     if rotation != 0:
         log.info("  Rotation detected: %d\u00b0 (FFmpeg auto-rotates)", rotation)
+    if not has_audio:
+        log.info("  No audio stream detected in %s", Path(video_path).name)
 
     return VideoInfo(
         path=str(Path(video_path).resolve()),
@@ -78,6 +85,7 @@ def probe_video(video_path: str) -> VideoInfo:
         height=int(video_stream["height"]),
         fps=fps,
         rotation=rotation,
+        has_audio=has_audio,
     )
 
 
@@ -106,12 +114,15 @@ def _build_drawtext_filter(
     escaped = _escape_drawtext(text)
     enable = f"enable='between(t,{start_time:.3f},{end_time:.3f})'"
 
+    # Only include fontfile if the configured font actually exists
+    font_param = f"fontfile={FONT_PATH}:" if Path(FONT_PATH).exists() else ""
+
     if style == "caption":
         y_expr = f"{OUTPUT_HEIGHT * 0.85}"
         return (
             f"[{current_label}]drawtext="
             f"text='{escaped}':"
-            f"fontfile={FONT_PATH}:"
+            f"{font_param}"
             f"fontsize=48:"
             f"fontcolor=white:"
             f"box=1:boxcolor=black@0.5:boxborderw=20:"
@@ -126,7 +137,7 @@ def _build_drawtext_filter(
         return (
             f"[{current_label}]drawtext="
             f"text='{escaped}':"
-            f"fontfile={FONT_PATH}:"
+            f"{font_param}"
             f"fontsize=56:"
             f"fontcolor=black:"
             f"box=1:boxcolor=yellow@0.9:boxborderw=16:"
@@ -140,7 +151,7 @@ def _build_drawtext_filter(
     return (
         f"[{current_label}]drawtext="
         f"text='{escaped}':"
-        f"fontfile={FONT_PATH}:"
+        f"{font_param}"
         f"fontsize={fs}:"
         f"fontcolor=white:"
         f"borderw=4:bordercolor=black:"
@@ -222,6 +233,7 @@ def _build_composite_filter(
     clip_index: int,
     input_indices: dict[int, int],
     audio_mode: str,
+    videos: list[VideoInfo] | None = None,
 ) -> tuple[list[str], str, str]:
     """
     Build filter chain for a composite layout clip.
@@ -327,20 +339,25 @@ def _build_composite_filter(
         )
 
     # Audio: use first sub-source's audio, clamped to min_dur
+    # Falls back to silence if the source has no audio stream
     a_label = f"{prefix}_a"
     first_sub = subs[0]
     audio_end = first_sub.start_time + min_dur
     src_idx = input_indices[first_sub.source_index]
+    source_has_audio = videos[first_sub.source_index].has_audio if videos else True
 
-    if clip.audio == "mute" and audio_mode != "original":
+    if not source_has_audio or (clip.audio == "mute" and audio_mode != "original"):
         filters.append(
             f"aevalsrc=0:d={min_dur:.3f},"
             f"aformat=sample_rates={sr}:channel_layouts=stereo[{a_label}]"
         )
     else:
+        # Pad + trim to exact duration for A/V sync with xfade
         filters.append(
             f"[{src_idx}:a]atrim=start={first_sub.start_time:.3f}:end={audio_end:.3f},"
-            f"asetpts=PTS-STARTPTS[{a_label}]"
+            f"asetpts=PTS-STARTPTS,"
+            f"apad=whole_dur={min_dur:.3f},"
+            f"atrim=end={min_dur:.3f},asetpts=PTS-STARTPTS[{a_label}]"
         )
 
     return filters, out_v, a_label
@@ -397,7 +414,7 @@ def build_ffmpeg_command(
         if is_composite:
             # Composite layout: build multi-source filter
             comp_filters, comp_v, comp_a = _build_composite_filter(
-                clip, i, input_indices, audio_mode
+                clip, i, input_indices, audio_mode, videos=videos
             )
             filters.extend(comp_filters)
             # Ensure consistent fps + reset PTS for xfade compatibility
@@ -417,9 +434,11 @@ def build_ffmpeg_command(
             # Scale/crop with optional Ken Burns effect
             filters.extend(_build_kenburns_filter(clip, v_clip, v_scaled))
 
-            # Per-clip audio
+            # Per-clip audio (silence fallback if source has no audio stream)
+            # Pad + trim to exact clip duration for A/V sync with xfade
             clip_dur = clip.end_time - clip.start_time
-            if clip.audio == "mute" and audio_mode != "original":
+            source_has_audio = videos[clip.source_index].has_audio
+            if not source_has_audio or (clip.audio == "mute" and audio_mode != "original"):
                 filters.append(
                     f"aevalsrc=0:d={clip_dur:.3f},"
                     f"aformat=sample_rates={sr}:channel_layouts=stereo[{a_clip}]"
@@ -427,7 +446,9 @@ def build_ffmpeg_command(
             else:
                 filters.append(
                     f"[{src_idx}:a]atrim=start={clip.start_time:.3f}:end={clip.end_time:.3f},"
-                    f"asetpts=PTS-STARTPTS[{a_clip}]"
+                    f"asetpts=PTS-STARTPTS,"
+                    f"apad=whole_dur={clip_dur:.3f},"
+                    f"atrim=end={clip_dur:.3f},asetpts=PTS-STARTPTS[{a_clip}]"
                 )
 
         audio_concat_inputs.append(f"[{a_clip}]")
@@ -437,12 +458,35 @@ def build_ffmpeg_command(
     n_clips = len(plan.clips)
     T = TRANSITION_DURATION
     use_xfade = transition_style != "cut" and n_clips > 1
+
     def _clip_duration(c: ClipPlan) -> float:
         if c.layout != "single" and c.sub_sources:
             return min(s.end_time - s.start_time for s in c.sub_sources)
         return c.end_time - c.start_time
 
-    clip_durations = [_clip_duration(c) for c in plan.clips]
+    clip_durations = [round(_clip_duration(c), 3) for c in plan.clips]
+
+    # Pre-compute xfade offsets using incremental accumulation (not re-summing)
+    # to avoid O(n²) work and floating-point drift on long reels.
+    xfade_offsets: list[float] = []
+    if use_xfade:
+        cumulative = 0.0
+        for k in range(1, n_clips):
+            cumulative = round(cumulative + clip_durations[k - 1], 3)
+            offset = round(cumulative - k * T, 3)
+            # Clip must be longer than transition duration on both sides
+            prev_ok = clip_durations[k - 1] > T * 2
+            curr_ok = clip_durations[k] > T * 2
+            if offset < 0.05 or not prev_ok or not curr_ok:
+                # Too short for transition — fall back to hard cut for whole reel
+                log.warning(
+                    "Clip %d too short for xfade (offset=%.3f), falling back to concat",
+                    k, offset,
+                )
+                use_xfade = False
+                xfade_offsets.clear()
+                break
+            xfade_offsets.append(offset)
 
     if n_clips == 1:
         lbl = video_concat_inputs[0].strip("[]")
@@ -452,7 +496,7 @@ def build_ffmpeg_command(
         for k in range(1, n_clips):
             cur = video_concat_inputs[k].strip("[]")
             out_label = "concatv" if k == n_clips - 1 else f"xf{k}"
-            offset = sum(clip_durations[:k]) - k * T
+            offset = xfade_offsets[k - 1]
             # Use per-clip transition type (validated against allowed list)
             tr = getattr(plan.clips[k], "transition", "fade")
             if tr not in ALLOWED_TRANSITIONS:
@@ -466,7 +510,7 @@ def build_ffmpeg_command(
         all_v = "".join(video_concat_inputs)
         filters.append(f"{all_v}concat=n={n_clips}:v=1:a=0[concatv]")
 
-    # Join audio clips
+    # Join audio clips — acrossfade with same duration as video xfade
     if n_clips == 1:
         filters.append(f"{audio_concat_inputs[0]}anull[concata]")
     elif use_xfade:
@@ -484,9 +528,35 @@ def build_ffmpeg_command(
         filters.append(f"{all_a}concat=n={n_clips}:v=0:a=1[concata]")
 
     # Text overlays
+    # When xfade is active, the output timeline is compressed: each transition
+    # removes T seconds.  Build a mapping from raw cumulative time to xfade time
+    # so overlay timestamps land at the correct position in the output.
+    def _adjust_time(t: float) -> float:
+        """Map a raw-timeline time to the xfade-compressed output timeline."""
+        if not use_xfade:
+            return t
+        # Cumulative raw boundaries (before compression)
+        # Round at each step to prevent drift on long reels (10+ clips)
+        raw_boundary = 0.0
+        compressed = 0.0
+        for k, dur in enumerate(clip_durations):
+            next_raw = round(raw_boundary + dur, 3)
+            if t <= next_raw:
+                # t falls inside clip k
+                return round(compressed + (t - raw_boundary), 3)
+            # After this clip, subtract transition overlap (except last clip)
+            compressed = round(compressed + dur - (T if k < n_clips - 1 else 0), 3)
+            raw_boundary = next_raw
+        # Past the end — clamp to total
+        return compressed
+
     current_video = "concatv"
     for j, overlay in enumerate(plan.text_overlays):
         next_label = f"txt{j}"
+        adj_start = _adjust_time(overlay.start_time)
+        adj_end = _adjust_time(overlay.end_time)
+        if adj_end <= adj_start:
+            continue  # overlay collapsed to nothing after adjustment
         filters.append(_build_drawtext_filter(
             current_label=current_video,
             next_label=next_label,
@@ -494,8 +564,8 @@ def build_ffmpeg_command(
             style=getattr(overlay, "style", "title"),
             position=overlay.position,
             font_size=overlay.font_size,
-            start_time=overlay.start_time,
-            end_time=overlay.end_time,
+            start_time=adj_start,
+            end_time=adj_end,
         ))
         current_video = next_label
 

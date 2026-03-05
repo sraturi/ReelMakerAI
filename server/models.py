@@ -111,6 +111,7 @@ class VideoInfo(BaseModel):
     height: int
     fps: float = Field(default=30.0)
     rotation: int = Field(default=0, description="Rotation from metadata (degrees)")
+    has_audio: bool = Field(default=True, description="Whether the video has an audio stream")
 
 
 class MusicTrack(BaseModel):
@@ -176,6 +177,7 @@ class SuggestClipRequest(BaseModel):
     clip_index: int
     current_plan: dict
     direction: str = ""
+    gemini_model: str = ""
 
 
 class RewriteCaptionRequest(BaseModel):
@@ -184,6 +186,7 @@ class RewriteCaptionRequest(BaseModel):
     caption_text: str
     context: str = ""
     direction: str = ""
+    gemini_model: str = ""
 
 
 class RenderRequest(BaseModel):

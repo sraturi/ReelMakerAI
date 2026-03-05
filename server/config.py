@@ -15,15 +15,34 @@ UPLOAD_DIR = BASE_DIR / "uploads"
 THUMBNAIL_DIR = BASE_DIR / "thumbnails"
 DATA_DIR = BASE_DIR / "data"
 
-# Font path (platform-aware)
-_FONT_PATHS = {
-    "Darwin": "/System/Library/Fonts/HelveticaNeue.ttc",
-    "Windows": "C:/Windows/Fonts/arial.ttf",
+# Font path (platform-aware, with fallback chain)
+_FONT_CANDIDATES = {
+    "Darwin": [
+        "/System/Library/Fonts/HelveticaNeue.ttc",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+    ],
+    "Windows": [
+        "C:/Windows/Fonts/arial.ttf",
+        "C:/Windows/Fonts/segoeui.ttf",
+    ],
 }
-FONT_PATH = _FONT_PATHS.get(
-    platform.system(),
+_LINUX_FALLBACKS = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-)
+    "/usr/share/fonts/TTF/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+]
+
+def _find_font() -> str:
+    """Find the first existing font from the candidate list."""
+    candidates = _FONT_CANDIDATES.get(platform.system(), _LINUX_FALLBACKS)
+    for path in candidates:
+        if Path(path).exists():
+            return path
+    # Last resort: return the first candidate (FFmpeg will error with a clear message)
+    return candidates[0] if candidates else "sans-serif"
+
+FONT_PATH = _find_font()
 
 # --- Gemini API ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")

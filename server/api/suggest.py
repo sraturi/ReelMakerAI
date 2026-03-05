@@ -14,6 +14,41 @@ router = APIRouter()
 log = logging.getLogger(__name__)
 
 
+def _filter_scene_menu(full_menu: str, current_source_index: int) -> str:
+    """Filter scene menu to current video + up to 2 others for variety.
+
+    If ≤3 videos, returns the full menu (already small enough).
+    Otherwise, parses by 'VIDEO N:' headers and keeps the current video
+    plus 2 others.
+    """
+    import re as _re
+
+    # Split into per-video sections
+    sections = _re.split(r"(?=^VIDEO \d+:)", full_menu, flags=_re.MULTILINE)
+    sections = [s for s in sections if s.strip()]
+
+    if len(sections) <= 3:
+        return full_menu
+
+    # Identify which section belongs to which video index
+    current_section = None
+    other_sections = []
+    for section in sections:
+        m = _re.match(r"^VIDEO (\d+):", section)
+        if m and int(m.group(1)) == current_source_index:
+            current_section = section
+        else:
+            other_sections.append(section)
+
+    # Keep current + up to 2 others
+    result_parts = []
+    if current_section:
+        result_parts.append(current_section)
+    result_parts.extend(other_sections[:2])
+
+    return "\n".join(result_parts)
+
+
 @router.post("/suggest-clip")
 async def suggest_clip(req: SuggestClipRequest):
     """Ask AI to suggest 3 alternative clips for a given position. Synchronous (2-5s)."""
@@ -29,10 +64,14 @@ async def suggest_clip(req: SuggestClipRequest):
     if 0 <= req.clip_index < len(clips):
         current_clip = clips[req.clip_index]
 
+    # Filter scene menu to relevant videos only
+    current_source_index = current_clip.get("source_index", 0) if current_clip else 0
+    filtered_menu = _filter_scene_menu(session.scene_menu, current_source_index)
+
     prompt = f"""You are an expert video editor. Given a scene analysis and the current editing plan, suggest 3 alternative clips that could replace clip #{req.clip_index}.
 
 SCENE ANALYSIS:
-{session.scene_menu}
+{filtered_menu}
 
 CURRENT CLIP AT POSITION {req.clip_index}:
 {json.dumps(current_clip, indent=2) if current_clip else "None"}
@@ -62,7 +101,9 @@ Return ONLY valid JSON:
         from gemini_service import _call_gemini
 
         response = await asyncio.to_thread(
-            _call_gemini, prompt, temperature=0.8, json_output=True
+            _call_gemini, prompt, temperature=0.8, json_output=True,
+            model=req.gemini_model or None,
+            max_output_tokens=2048, thinking_budget=0,
         )
         suggestions = json.loads(response.text)
 
