@@ -3,6 +3,7 @@ import type { VideoInfo } from "../types";
 export async function uploadVideos(
   files: File[],
   sessionId?: string,
+  onProgress?: (pct: number) => void,
 ): Promise<{ session_id: string; videos: VideoInfo[] }> {
   const form = new FormData();
   for (const f of files) {
@@ -11,10 +12,31 @@ export async function uploadVideos(
   if (sessionId) {
     form.append("session_id", sessionId);
   }
-  const res = await fetch("/api/upload", { method: "POST", body: form });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || `HTTP ${res.status}`);
-  }
-  return res.json();
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/upload");
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(Math.round((e.loaded / e.total) * 100));
+      }
+    };
+
+    xhr.onload = () => {
+      try {
+        const data = JSON.parse(xhr.responseText);
+        if (xhr.status >= 400) {
+          reject(new Error(data.error || `HTTP ${xhr.status}`));
+        } else {
+          resolve(data);
+        }
+      } catch {
+        reject(new Error(`HTTP ${xhr.status}`));
+      }
+    };
+
+    xhr.onerror = () => reject(new Error("Network error"));
+    xhr.send(form);
+  });
 }

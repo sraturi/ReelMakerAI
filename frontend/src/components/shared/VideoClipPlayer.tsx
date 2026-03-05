@@ -142,7 +142,7 @@ export function VideoClipPlayer({
         ref={videoRef}
         src={src}
         playsInline
-        preload="metadata"
+        preload={mode === "hover" ? "none" : "metadata"}
         onLoadedMetadata={handleLoadedMetadata}
         className={`h-full w-full object-cover ${
           mode === "hover" && !hovered ? "opacity-0" : "opacity-100"

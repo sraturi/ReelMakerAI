@@ -1,4 +1,7 @@
+import { useState } from "react";
+import { Sparkles, Loader2 } from "lucide-react";
 import { useSessionStore } from "../../store/useSessionStore";
+import { enhancePrompt } from "../../api/enhance";
 
 const STYLES = [
   { value: "montage", label: "Montage" },
@@ -63,24 +66,23 @@ function Select({
 export function SettingsPanel() {
   const settings = useSessionStore((s) => s.settings);
   const update = useSessionStore((s) => s.updateSettings);
+  const [enhancing, setEnhancing] = useState(false);
+
+  async function handleEnhance() {
+    if (!settings.prompt.trim() || enhancing) return;
+    setEnhancing(true);
+    try {
+      const enhanced = await enhancePrompt(settings.prompt, settings);
+      update({ prompt: enhanced });
+    } catch {
+      // silently fail — user can retry
+    }
+    setEnhancing(false);
+  }
 
   return (
     <div className="space-y-4 rounded-xl bg-surface p-5">
       <h3 className="text-sm font-semibold">Reel Settings</h3>
-
-      {/* Prompt */}
-      <div>
-        <label className="mb-1 block text-xs font-medium text-text-muted">
-          Prompt / Direction
-        </label>
-        <textarea
-          value={settings.prompt}
-          onChange={(e) => update({ prompt: e.target.value })}
-          placeholder="e.g. Promote my eyelashes course, make it exciting and professional"
-          rows={3}
-          className="w-full resize-none rounded-lg border border-border bg-surface-light px-3 py-2 text-sm text-text outline-none placeholder:text-text-muted/50 focus:border-primary"
-        />
-      </div>
 
       {/* Grid of options */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -160,6 +162,34 @@ export function SettingsPanel() {
           />
           Original Audio
         </label>
+      </div>
+
+      {/* Prompt — last so user sets preferences first, then AI can use them */}
+      <div>
+        <div className="mb-1 flex items-center justify-between">
+          <label className="block text-xs font-medium text-text-muted">
+            Prompt / Direction
+          </label>
+          <button
+            onClick={handleEnhance}
+            disabled={!settings.prompt.trim() || enhancing}
+            className="flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium text-primary hover:bg-primary/10 disabled:opacity-40"
+          >
+            {enhancing ? (
+              <Loader2 size={12} className="animate-spin" />
+            ) : (
+              <Sparkles size={12} />
+            )}
+            {enhancing ? "Enhancing..." : "Enhance Prompt"}
+          </button>
+        </div>
+        <textarea
+          value={settings.prompt}
+          onChange={(e) => update({ prompt: e.target.value })}
+          placeholder="e.g. Promote my eyelashes course, make it exciting and professional"
+          rows={3}
+          className="w-full resize-none rounded-lg border border-border bg-surface-light px-3 py-2 text-sm text-text outline-none placeholder:text-text-muted/50 focus:border-primary"
+        />
       </div>
     </div>
   );

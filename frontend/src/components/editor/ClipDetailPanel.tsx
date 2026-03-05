@@ -1,8 +1,11 @@
+import { useCallback } from "react";
 import { X, Volume2, VolumeX } from "lucide-react";
 import { VideoClipPlayer } from "../shared/VideoClipPlayer";
 import { TransitionPicker } from "./TransitionPicker";
 import { KenBurnsPicker } from "./KenBurnsPicker";
+import { TrimSlider } from "./TrimSlider";
 import { useEditorStore } from "../../store/useEditorStore";
+import { useSessionStore } from "../../store/useSessionStore";
 import type { ClipPlan } from "../../types";
 
 export function ClipDetailPanel() {
@@ -10,11 +13,25 @@ export function ClipDetailPanel() {
   const selectedClipId = useEditorStore((s) => s.selectedClipId);
   const selectClip = useEditorStore((s) => s.selectClip);
   const updateClip = useEditorStore((s) => s.updateClip);
+  const videos = useSessionStore((s) => s.videos);
 
   const clip = clips.find((c) => c.clip_id === selectedClipId);
   if (!clip) return null;
 
+  const sourceVideo = videos[clip.source_index];
+  const maxDuration = sourceVideo?.duration || clip.end_time;
+
   const update = (u: Partial<ClipPlan>) => updateClip(clip.clip_id, u);
+
+  const handleTrimChange = useCallback(
+    (start: number, end: number) => {
+      updateClip(clip.clip_id, {
+        start_time: start,
+        end_time: end,
+      });
+    },
+    [clip.clip_id, updateClip],
+  );
 
   return (
     <div className="rounded-xl border border-border bg-surface p-4">
@@ -30,7 +47,7 @@ export function ClipDetailPanel() {
 
       {/* Playable video preview */}
       <VideoClipPlayer
-        key={clip.clip_id}
+        key={`${clip.clip_id}-${clip.start_time}-${clip.end_time}`}
         videoUrl={clip.video_url}
         startTime={clip.start_time}
         endTime={clip.end_time}
@@ -44,13 +61,16 @@ export function ClipDetailPanel() {
         <p>
           <span className="font-medium text-text">Source:</span> {clip.source_video}
         </p>
-        <p>
-          <span className="font-medium text-text">Range:</span>{" "}
-          {clip.start_time.toFixed(1)}s – {clip.end_time.toFixed(1)}s
-        </p>
       </div>
 
       <div className="space-y-4">
+        <TrimSlider
+          startTime={clip.start_time}
+          endTime={clip.end_time}
+          duration={maxDuration}
+          onChange={handleTrimChange}
+        />
+
         <TransitionPicker
           value={clip.transition}
           onChange={(v) => update({ transition: v })}

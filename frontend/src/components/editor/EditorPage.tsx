@@ -1,5 +1,5 @@
-import { useState, useCallback } from "react";
-import { Play, Loader2 } from "lucide-react";
+import { useState, useCallback, useEffect } from "react";
+import { Play, Loader2, Undo2, Redo2 } from "lucide-react";
 import { ClipCardList } from "./ClipCardList";
 import { ClipDetailPanel } from "./ClipDetailPanel";
 import { OverlayList } from "./OverlayList";
@@ -20,11 +20,31 @@ export function EditorPage() {
   const overlays = useEditorStore((s) => s.overlays);
   const selectedClipId = useEditorStore((s) => s.selectedClipId);
   const replaceClip = useEditorStore((s) => s.replaceClip);
+  const undo = useEditorStore((s) => s.undo);
+  const redo = useEditorStore((s) => s.redo);
+  const pastLen = useEditorStore((s) => s._past.length);
+  const futureLen = useEditorStore((s) => s._future.length);
   const setStep = useUIStore((s) => s.setStep);
   const setLoading = useUIStore((s) => s.setLoading);
   const setError = useUIStore((s) => s.setError);
   const setActiveJobId = useUIStore((s) => s.setActiveJobId);
   const clearLogs = useUIStore((s) => s.clearLogs);
+
+  // Keyboard shortcuts for undo/redo
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        useEditorStore.getState().undo();
+      } else if (mod && e.key === "z" && e.shiftKey) {
+        e.preventDefault();
+        useEditorStore.getState().redo();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   const [suggestModal, setSuggestModal] = useState<{
     clipIndex: number;
@@ -99,14 +119,32 @@ export function EditorPage() {
             <p className="text-sm text-text-muted">{plan.description}</p>
           )}
         </div>
-        <button
-          onClick={handleRender}
-          disabled={clips.length === 0}
-          className="flex items-center gap-2 rounded-xl bg-success px-6 py-2.5 font-semibold text-white hover:bg-success/80 disabled:opacity-50"
-        >
-          <Play size={18} />
-          Render Reel
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={undo}
+            disabled={pastLen === 0}
+            className="rounded-lg p-2 text-text-muted hover:bg-surface-light disabled:opacity-30"
+            title="Undo (Ctrl+Z)"
+          >
+            <Undo2 size={18} />
+          </button>
+          <button
+            onClick={redo}
+            disabled={futureLen === 0}
+            className="rounded-lg p-2 text-text-muted hover:bg-surface-light disabled:opacity-30"
+            title="Redo (Ctrl+Shift+Z)"
+          >
+            <Redo2 size={18} />
+          </button>
+          <button
+            onClick={handleRender}
+            disabled={clips.length === 0}
+            className="flex items-center gap-2 rounded-xl bg-success px-6 py-2.5 font-semibold text-white hover:bg-success/80 disabled:opacity-50"
+          >
+            <Play size={18} />
+            Render Reel
+          </button>
+        </div>
       </div>
 
       <AIActions />
@@ -150,12 +188,21 @@ export function EditorPage() {
                 <button
                   key={i}
                   onClick={() => handlePickSuggestion(s)}
-                  className="w-full rounded-lg bg-surface-light p-3 text-left hover:bg-surface-lighter"
+                  className="flex w-full items-center gap-3 rounded-lg bg-surface-light p-3 text-left hover:bg-surface-lighter"
                 >
-                  <div className="text-sm font-medium">
-                    {s.source_video} [{s.start_time.toFixed(1)}s – {s.end_time.toFixed(1)}s]
+                  {s.thumbnail_url && (
+                    <img
+                      src={s.thumbnail_url}
+                      alt=""
+                      className="h-16 w-10 flex-shrink-0 rounded object-cover"
+                    />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium">
+                      {s.source_video} [{s.start_time.toFixed(1)}s – {s.end_time.toFixed(1)}s]
+                    </div>
+                    <p className="mt-1 text-xs text-text-muted">{s.reason}</p>
                   </div>
-                  <p className="mt-1 text-xs text-text-muted">{s.reason}</p>
                 </button>
               ))}
             </div>

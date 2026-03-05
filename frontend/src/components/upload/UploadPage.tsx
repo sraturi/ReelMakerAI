@@ -23,6 +23,7 @@ export function UploadPage() {
   const setOverlays = useEditorStore((s) => s.setOverlays);
   const setStep = useUIStore((s) => s.setStep);
   const setLoading = useUIStore((s) => s.setLoading);
+  const setUploadProgress = useUIStore((s) => s.setUploadProgress);
   const setError = useUIStore((s) => s.setError);
   const clearLogs = useUIStore((s) => s.clearLogs);
   const error = useUIStore((s) => s.error);
@@ -69,8 +70,12 @@ export function UploadPage() {
       setError(null);
       setPhase("uploading");
       setLoading(true, "Uploading videos...");
+      setUploadProgress(0);
       try {
-        const result = await uploadVideos(files, sessionId || undefined);
+        const result = await uploadVideos(files, sessionId || undefined, (pct) => {
+          setUploadProgress(pct);
+        });
+        setUploadProgress(null);
         setSessionId(result.session_id);
         setVideos(result.videos);  // API returns full accumulated list
         setLoading(false);
@@ -80,7 +85,7 @@ export function UploadPage() {
         setPhase("idle");
       }
     },
-    [sessionId, setSessionId, setVideos, setLoading, setError],
+    [sessionId, setSessionId, setVideos, setLoading, setUploadProgress, setError],
   );
 
   const handleAnalyzeAndPlan = useCallback(async () => {
