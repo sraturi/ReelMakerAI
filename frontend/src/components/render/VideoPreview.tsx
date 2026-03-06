@@ -31,25 +31,25 @@ export function VideoPreview() {
         />
       </div>
 
-      <div className="flex gap-3">
+      <div className="flex w-full max-w-sm flex-col gap-2 sm:w-auto sm:max-w-none sm:flex-row sm:gap-3">
         <a
           href={renderOutput}
           download
-          className="flex items-center gap-2 rounded-xl bg-primary px-6 py-2.5 font-semibold text-white hover:bg-primary-hover"
+          className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-6 py-2.5 font-semibold text-white hover:bg-primary-hover sm:w-auto"
         >
           <Download size={18} />
           Download
         </a>
         <button
           onClick={() => setStep("edit")}
-          className="flex items-center gap-2 rounded-xl border border-border px-6 py-2.5 font-semibold text-text hover:bg-surface-light"
+          className="flex w-full items-center justify-center gap-2 rounded-xl border border-border px-6 py-2.5 font-semibold text-text hover:bg-surface-light sm:w-auto"
         >
           <Edit3 size={18} />
           Edit More
         </button>
         <button
           onClick={handleNewProject}
-          className="flex items-center gap-2 rounded-xl border border-border px-6 py-2.5 font-semibold text-text hover:bg-surface-light"
+          className="flex w-full items-center justify-center gap-2 rounded-xl border border-border px-6 py-2.5 font-semibold text-text hover:bg-surface-light sm:w-auto"
         >
           <Plus size={18} />
           New Project

@@ -98,7 +98,7 @@ export function UploadPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Upload Videos</h1>
+        <h1 className="text-xl font-bold sm:text-2xl">Upload Videos</h1>
         <p className="text-sm text-text-muted">
           Upload your videos and let AI analyze them before you set your creative direction.
         </p>

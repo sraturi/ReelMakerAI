@@ -80,7 +80,7 @@ export function PromptPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Creative Direction</h1>
+        <h1 className="text-xl font-bold sm:text-2xl">Creative Direction</h1>
         <p className="text-sm text-text-muted">
           Your videos have been analyzed. Set your prompt and preferences, then generate a plan.
         </p>
@@ -88,7 +88,7 @@ export function PromptPage() {
 
       {/* Analysis summary */}
       {analysis && (
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="flex items-center gap-3 rounded-xl bg-surface p-4">
             <Film size={20} className="text-primary" />
             <div>

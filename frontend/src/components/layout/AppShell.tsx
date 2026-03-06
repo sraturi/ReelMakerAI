@@ -15,7 +15,7 @@ export function AppShell({ children }: Props) {
   return (
     <div className="flex min-h-screen flex-col">
       <header className="sticky top-0 z-40 border-b border-border bg-surface/80 backdrop-blur-md">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-3 py-3 sm:px-4">
           <button
             onClick={() => setStep("home")}
             className="flex items-center gap-2 transition-opacity hover:opacity-80"
@@ -35,7 +35,7 @@ export function AppShell({ children }: Props) {
           </div>
         </div>
       </header>
-      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
+      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-4 sm:py-6">
         {children}
       </main>
     </div>

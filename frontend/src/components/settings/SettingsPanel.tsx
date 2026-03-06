@@ -85,7 +85,7 @@ export function SettingsPanel({ sessionId }: { sessionId?: string | null }) {
       <h3 className="text-sm font-semibold">Reel Settings</h3>
 
       {/* Grid of options */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
         <Select
           label="Style"
           value={settings.reel_style}
@@ -169,7 +169,7 @@ export function SettingsPanel({ sessionId }: { sessionId?: string | null }) {
         <label className="mb-1.5 block text-xs font-medium text-text-muted">
           Composite Layouts (AI may add 0–2 per reel)
         </label>
-        <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+        <div className="flex flex-wrap gap-x-4 gap-y-1.5 sm:gap-x-5">
           {([
             { value: "split_v", label: "Top / Bottom" },
             { value: "split_h", label: "Left / Right" },

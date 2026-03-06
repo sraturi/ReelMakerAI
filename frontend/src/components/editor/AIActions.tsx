@@ -66,7 +66,7 @@ export function AIActions() {
   }
 
   return (
-    <div className="flex gap-2">
+    <div className="flex flex-col gap-2 sm:flex-row">
       <input
         type="text"
         value={direction}
@@ -79,7 +79,7 @@ export function AIActions() {
       <button
         onClick={handleReEdit}
         disabled={busy || !direction.trim()}
-        className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-50"
+        className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-50 sm:w-auto"
       >
         {busy ? (
           <Loader2 size={14} className="animate-spin" />

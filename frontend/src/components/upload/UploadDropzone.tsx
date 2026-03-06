@@ -45,7 +45,7 @@ export function UploadDropzone({ onFiles, disabled }: Props) {
       }}
       onDragLeave={() => setDragging(false)}
       onDrop={handleDrop}
-      className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed p-12 transition-colors ${
+      className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed p-8 transition-colors sm:p-12 ${
         dragging
           ? "border-primary bg-primary/10"
           : "border-border hover:border-primary/50 hover:bg-surface-light"

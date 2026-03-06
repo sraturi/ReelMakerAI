@@ -154,9 +154,9 @@ export function HomePage() {
       {/* Draft Card */}
       {draft && draft.video_count > 0 && (
         <div className="rounded-xl border border-primary/30 bg-primary/5 p-5">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/20">
+              <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary/20">
                 <FileVideo className="text-primary" size={20} />
               </div>
               <div>
@@ -210,7 +210,7 @@ export function HomePage() {
 
       {/* Project Grid */}
       {projects.length > 0 && (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 md:grid-cols-4">
           {projects.map((project) => (
             <ProjectCard
               key={project.project_id}
