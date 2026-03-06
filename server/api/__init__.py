@@ -13,6 +13,7 @@ from .thumbnail import router as thumbnail_router
 from .video import router as video_router
 from .status import router as ws_status_router
 from .session import router as session_router
+from .project import router as project_router
 
 api_router = APIRouter(prefix="/api")
 api_router.include_router(upload_router)
@@ -25,6 +26,7 @@ api_router.include_router(render_router)
 api_router.include_router(thumbnail_router)
 api_router.include_router(video_router)
 api_router.include_router(session_router)
+api_router.include_router(project_router)
 
 # WebSocket status route mounted separately (no /api prefix — lives at /ws/status/{job_id})
 __all__ = ["api_router", "ws_status_router"]

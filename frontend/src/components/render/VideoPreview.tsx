@@ -15,7 +15,7 @@ export function VideoPreview() {
     reset();
     clearLogs();
     setRenderOutput(null);
-    setStep("upload");
+    setStep("home");
   }
 
   return (

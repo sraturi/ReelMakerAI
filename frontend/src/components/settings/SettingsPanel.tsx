@@ -221,9 +221,10 @@ export function SettingsPanel({ sessionId }: { sessionId?: string | null }) {
         <textarea
           value={settings.prompt}
           onChange={(e) => update({ prompt: e.target.value })}
+          disabled={enhancing}
           placeholder="e.g. Promote my eyelashes course, make it exciting and professional"
           rows={3}
-          className="w-full resize-none rounded-lg border border-border bg-surface-light px-3 py-2 text-sm text-text outline-none placeholder:text-text-muted/50 focus:border-primary"
+          className="w-full resize-none rounded-lg border border-border bg-surface-light px-3 py-2 text-sm text-text outline-none placeholder:text-text-muted/50 focus:border-primary disabled:cursor-not-allowed disabled:opacity-50"
         />
       </div>
     </div>

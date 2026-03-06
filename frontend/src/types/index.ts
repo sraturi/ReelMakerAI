@@ -109,4 +109,28 @@ export interface CaptionSuggestion {
   tone: string;
 }
 
-export type Step = "upload" | "analyze" | "prompt" | "edit" | "render" | "preview";
+export type Step = "home" | "upload" | "analyze" | "prompt" | "edit" | "render" | "preview";
+
+export interface CompletedProject {
+  project_id: string;
+  name: string;
+  description: string;
+  output_url: string;
+  thumbnail_url: string;
+  duration: number;
+  created_at: number;
+}
+
+export interface DraftInfo {
+  session_id: string;
+  video_count: number;
+  has_analysis: boolean;
+  has_plan: boolean;
+  prompt: string;
+  created_at: number;
+}
+
+export interface HomeData {
+  projects: CompletedProject[];
+  draft: DraftInfo | null;
+}

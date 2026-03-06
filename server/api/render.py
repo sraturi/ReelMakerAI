@@ -9,7 +9,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from models import RenderRequest
-from session_store import store, jobs
+from session_store import store, jobs, project_store
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -164,10 +164,47 @@ async def _run_render(job_id: str, session, req: RenderRequest):
             return
 
         output_file = f"reel_{timestamp}.mp4"
+
+        # Auto-save as completed project
+        project_id = None
+        try:
+            from datetime import datetime
+            from thumbnail_service import generate_project_thumbnail
+
+            # Name from prompt or fallback
+            settings = session.settings if isinstance(session.settings, dict) else {}
+            prompt = settings.get("prompt", "")
+            name = prompt[:60].strip() if prompt else f"Reel - {datetime.now().strftime('%b %d, %Y %H:%M')}"
+            description = plan_data.get("description", "")
+
+            thumb_file = generate_project_thumbnail(output_path, "tmp_" + str(timestamp))
+            project_id = project_store.create(
+                session_id=session.session_id,
+                output_file=output_file,
+                duration=plan.total_duration,
+                name=name,
+                description=description,
+                settings=settings,
+                thumbnail_file=None,
+            )
+            # Re-generate thumbnail with actual project_id
+            thumb_file = generate_project_thumbnail(output_path, project_id)
+            if thumb_file:
+                conn = project_store._get_conn()
+                conn.execute(
+                    "UPDATE projects SET thumbnail_file = ? WHERE project_id = ?",
+                    (thumb_file, project_id),
+                )
+                conn.commit()
+        except Exception as e:
+            log.warning("Failed to auto-save project: %s", e)
+
         result = {
             "output": output_file,
             "output_url": f"/api/output/{output_file}",
         }
+        if project_id:
+            result["project_id"] = project_id
         if jobs.complete(job_id, result):
             job["logs"].append(f"Render complete: {output_file}")
 

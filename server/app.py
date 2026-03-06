@@ -41,7 +41,7 @@ app.include_router(api_router)
 app.include_router(ws_status_router)  # WebSocket at /ws/status/{job_id}
 
 # --- Background cleanup ---
-from session_store import store as session_store
+from session_store import store as session_store, project_store
 
 @app.on_event("startup")
 async def start_cleanup_loop():
@@ -49,10 +49,11 @@ async def start_cleanup_loop():
         while True:
             await asyncio.sleep(600)  # every 10 minutes
             session_store.cleanup_expired()
-            # Clean output files older than 2 hours
+            # Clean output files older than 2 hours, but protect project files
+            protected = project_store.protected_files()
             cutoff = time.time() - 7200
             for f in OUTPUT_DIR.iterdir():
-                if f.is_file() and f.stat().st_mtime < cutoff:
+                if f.is_file() and f.name not in protected and f.stat().st_mtime < cutoff:
                     f.unlink(missing_ok=True)
     asyncio.create_task(cleanup_loop())
 

@@ -15,6 +15,7 @@ const stepOrder: Step[] = ["upload", "analyze", "prompt", "edit", "render", "pre
 
 export function StepIndicator() {
   const currentStep = useUIStore((s) => s.step);
+  if (currentStep === "home") return null;
   const currentIdx = stepOrder.indexOf(currentStep);
 
   return (

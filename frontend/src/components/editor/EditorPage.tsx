@@ -113,38 +113,30 @@ export function EditorPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <div>
+        <div className="flex items-center gap-3">
           <h1 className="text-xl font-bold">Edit Your Reel</h1>
-          {plan?.description && (
-            <p className="text-sm text-text-muted">{plan.description}</p>
-          )}
+          <div className="flex items-center gap-1">
+            <button
+              onClick={undo}
+              disabled={pastLen === 0}
+              className="rounded-lg p-1.5 text-text-muted hover:bg-surface-light disabled:opacity-30"
+              title="Undo (Ctrl+Z)"
+            >
+              <Undo2 size={16} />
+            </button>
+            <button
+              onClick={redo}
+              disabled={futureLen === 0}
+              className="rounded-lg p-1.5 text-text-muted hover:bg-surface-light disabled:opacity-30"
+              title="Redo (Ctrl+Shift+Z)"
+            >
+              <Redo2 size={16} />
+            </button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={undo}
-            disabled={pastLen === 0}
-            className="rounded-lg p-2 text-text-muted hover:bg-surface-light disabled:opacity-30"
-            title="Undo (Ctrl+Z)"
-          >
-            <Undo2 size={18} />
-          </button>
-          <button
-            onClick={redo}
-            disabled={futureLen === 0}
-            className="rounded-lg p-2 text-text-muted hover:bg-surface-light disabled:opacity-30"
-            title="Redo (Ctrl+Shift+Z)"
-          >
-            <Redo2 size={18} />
-          </button>
-          <button
-            onClick={handleRender}
-            disabled={clips.length === 0}
-            className="flex items-center gap-2 rounded-xl bg-success px-6 py-2.5 font-semibold text-white hover:bg-success/80 disabled:opacity-50"
-          >
-            <Play size={18} />
-            Render Reel
-          </button>
-        </div>
+        {plan?.description && (
+          <p className="hidden text-sm text-text-muted sm:block">{plan.description}</p>
+        )}
       </div>
 
       <AIActions />
@@ -168,6 +160,16 @@ export function EditorPage() {
           )}
         </div>
       </div>
+
+      {/* Render CTA */}
+      <button
+        onClick={handleRender}
+        disabled={clips.length === 0}
+        className="gradient-bg flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-base font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <Play size={20} />
+        Render Reel
+      </button>
 
       {/* Suggest modal */}
       {suggestLoading && (

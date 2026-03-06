@@ -195,3 +195,13 @@ class RenderRequest(BaseModel):
     plan: dict
     audio_mode: str = "voice"
     transition_style: str = "auto"
+
+
+class CreateProjectRequest(BaseModel):
+    """Request to create a completed project record."""
+    session_id: str
+    output_file: str
+    name: str = ""
+    duration: float = 0.0
+    description: str = ""
+    settings: dict = Field(default_factory=dict)

@@ -1,4 +1,5 @@
 import { AppShell } from "./components/layout/AppShell";
+import { HomePage } from "./components/home/HomePage";
 import { UploadPage } from "./components/upload/UploadPage";
 import { PromptPage } from "./components/prompt/PromptPage";
 import { EditorPage } from "./components/editor/EditorPage";
@@ -12,6 +13,7 @@ export default function App() {
 
   return (
     <AppShell>
+      {step === "home" && <HomePage />}
       {step === "upload" && <UploadPage />}
       {step === "analyze" && <UploadPage />}
       {step === "prompt" && <PromptPage />}

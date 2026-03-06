@@ -45,7 +45,7 @@ const initialTheme = getInitialTheme();
 applyTheme(initialTheme);
 
 export const useUIStore = create<UIState>((set) => ({
-  step: "upload",
+  step: "home",
   theme: initialTheme,
   loading: false,
   loadingMessage: "",

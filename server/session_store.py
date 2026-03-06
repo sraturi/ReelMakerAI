@@ -186,6 +186,16 @@ class SessionStore:
         for row in rows:
             self._cleanup_session(row["session_id"])
 
+    def get_draft(self) -> Session | None:
+        """Return the most recent session (ignoring TTL) as a draft, or None."""
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT * FROM sessions ORDER BY last_accessed DESC LIMIT 1"
+        ).fetchone()
+        if row is None:
+            return None
+        return Session(row["session_id"], self, dict(row))
+
     def clear_all(self) -> int:
         """Delete every session. Returns count of deleted rows."""
         conn = self._get_conn()
@@ -324,6 +334,135 @@ class JobStore:
             log.debug("Pruned %d old jobs", len(expired))
 
 
+class ProjectStore:
+    """SQLite-backed store for completed reel projects."""
+
+    MAX_PROJECTS = 20
+
+    def __init__(self):
+        self._local = threading.local()
+        self._init_db()
+
+    def _get_conn(self) -> sqlite3.Connection:
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.row_factory = sqlite3.Row
+            self._local.conn = conn
+        return conn
+
+    def _init_db(self):
+        conn = self._get_conn()
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS projects (
+                project_id     TEXT PRIMARY KEY,
+                session_id     TEXT NOT NULL,
+                name           TEXT NOT NULL DEFAULT '',
+                description    TEXT NOT NULL DEFAULT '',
+                output_file    TEXT NOT NULL,
+                thumbnail_file TEXT,
+                duration       REAL NOT NULL DEFAULT 0.0,
+                created_at     REAL NOT NULL,
+                settings       TEXT NOT NULL DEFAULT '{}'
+            )
+            """
+        )
+        conn.commit()
+
+    def create(
+        self,
+        session_id: str,
+        output_file: str,
+        duration: float = 0.0,
+        name: str = "",
+        description: str = "",
+        settings: dict | None = None,
+        thumbnail_file: str | None = None,
+    ) -> str:
+        project_id = uuid.uuid4().hex[:12]
+        now = time.time()
+        conn = self._get_conn()
+        conn.execute(
+            """
+            INSERT INTO projects
+                (project_id, session_id, name, description, output_file,
+                 thumbnail_file, duration, created_at, settings)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                project_id, session_id, name, description, output_file,
+                thumbnail_file, duration, now, json.dumps(settings or {}),
+            ),
+        )
+        conn.commit()
+        self._enforce_limit()
+        log.info("Created project %s for session %s", project_id, session_id)
+        return project_id
+
+    def list_all(self) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM projects ORDER BY created_at DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get(self, project_id: str) -> dict | None:
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT * FROM projects WHERE project_id = ?", (project_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def delete(self, project_id: str) -> bool:
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT output_file, thumbnail_file FROM projects WHERE project_id = ?",
+            (project_id,),
+        ).fetchone()
+        if not row:
+            return False
+
+        from config import OUTPUT_DIR
+
+        # Delete output file
+        output_path = OUTPUT_DIR / row["output_file"]
+        if output_path.exists():
+            output_path.unlink(missing_ok=True)
+
+        # Delete thumbnail
+        thumb_dir = THUMBNAIL_DIR / "projects"
+        if row["thumbnail_file"]:
+            thumb_path = thumb_dir / row["thumbnail_file"]
+            if thumb_path.exists():
+                thumb_path.unlink(missing_ok=True)
+
+        conn.execute("DELETE FROM projects WHERE project_id = ?", (project_id,))
+        conn.commit()
+        log.info("Deleted project %s", project_id)
+        return True
+
+    def _enforce_limit(self):
+        """Keep only the newest MAX_PROJECTS projects."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT project_id FROM projects ORDER BY created_at DESC"
+        ).fetchall()
+        if len(rows) <= self.MAX_PROJECTS:
+            return
+        excess = rows[self.MAX_PROJECTS:]
+        for row in excess:
+            self.delete(row["project_id"])
+
+    def protected_files(self) -> set[str]:
+        """Return set of output filenames that belong to saved projects."""
+        return {p["output_file"] for p in self.list_all()}
+
+
 # Global singletons
 store = SessionStore()
 jobs = JobStore()
+project_store = ProjectStore()
