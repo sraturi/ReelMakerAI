@@ -20,6 +20,7 @@ AI-powered tool that creates beat-synced Instagram Reels and TikTok videos from 
 - **Clip suggestions** — AI recommends alternative clips for any position
 - **Caption rewriting** — Generate alternative captions with different tones
 - **Gemini 2.5 Flash or Pro** — Choose per step
+- **Cost-optimized** — Per-call token limits, thinking disabled for lightweight helpers, smart JSON repair avoids redundant API calls, client-side response caching (60s)
 
 ### Editing
 - **6 reel styles** — Montage, Travel, Vlog, Tutorial, Aesthetic, Promo
