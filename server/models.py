@@ -112,6 +112,7 @@ class VideoInfo(BaseModel):
     fps: float = Field(default=30.0)
     rotation: int = Field(default=0, description="Rotation from metadata (degrees)")
     has_audio: bool = Field(default=True, description="Whether the video has an audio stream")
+    is_hdr: bool = Field(default=False, description="Whether source is HDR (HLG/PQ)")
 
 
 class MusicTrack(BaseModel):

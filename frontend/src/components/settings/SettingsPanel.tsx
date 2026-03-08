@@ -17,7 +17,7 @@ const APPROACHES = [
   { value: "story", label: "Story / Chronological" },
 ];
 
-const DURATIONS = [10, 15, 20, 30, 40, 45];
+const DURATIONS = [10, 15, 20, 30, 40, 45, 60, 90, 120];
 
 const TRANSITIONS = [
   { value: "auto", label: "Auto" },

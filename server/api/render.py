@@ -94,6 +94,9 @@ async def _run_render(job_id: str, session, req: RenderRequest):
         plan.total_duration = round(t, 3)
 
         # Validate clips
+        job["logs"].append(
+            f"Validating {len(plan.clips)} clips, {len(plan.text_overlays)} overlays..."
+        )
         valid_clips = []
         for clip in plan.clips:
             if clip.source_index < 0 or clip.source_index >= len(videos):
@@ -143,19 +146,34 @@ async def _run_render(job_id: str, session, req: RenderRequest):
             job["logs"].append("Cancelled by user.")
             return
 
+        composites = sum(1 for c in plan.clips if c.layout != "single")
+        transitions_desc = req.transition_style if req.transition_style != "cut" else "none"
         job["logs"].append(
-            f"Rendering {len(plan.clips)} clips, {len(plan.text_overlays)} overlays..."
+            f"Prepared {len(plan.clips)} clips ({composites} composite), "
+            f"{len(plan.text_overlays)} overlays, "
+            f"transitions: {transitions_desc}"
         )
+        job["logs"].append("Building FFmpeg filter graph...")
 
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         timestamp = int(time.time())
         output_path = str(OUTPUT_DIR / f"reel_{timestamp}.mp4")
 
+        job["logs"].append(
+            f"Starting FFmpeg encode ({plan.total_duration:.1f}s, "
+            f"{req.audio_mode} audio)..."
+        )
+
         cancel_event = job.get("_cancel_event")
+
+        def _on_progress(pct: int, message: str):
+            job["logs"].append(message)
+
         result_path = await asyncio.to_thread(
             assemble_reel, plan, videos, output_path,
             audio_mode=req.audio_mode, transition_style=req.transition_style,
             cancel_event=cancel_event,
+            progress_callback=_on_progress,
         )
 
         # Check cancellation after render
@@ -163,9 +181,12 @@ async def _run_render(job_id: str, session, req: RenderRequest):
             job["logs"].append("Cancelled by user.")
             return
 
+        job["logs"].append("Encoding complete, finalizing...")
+
         output_file = f"reel_{timestamp}.mp4"
 
         # Auto-save as completed project
+        job["logs"].append("Saving project...")
         project_id = None
         try:
             from datetime import datetime

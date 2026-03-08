@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import subprocess
 from pathlib import Path
 
@@ -72,8 +73,14 @@ def probe_video(video_path: str) -> VideoInfo:
     if rotation == 0:
         rotation = int(video_stream.get("tags", {}).get("rotate", 0))
 
+    # Detect HDR from color transfer characteristics
+    color_transfer = video_stream.get("color_transfer", "")
+    is_hdr = color_transfer in ("arib-std-b67", "smpte2084")  # HLG or PQ/HDR10
+
     if rotation != 0:
         log.info("  Rotation detected: %d\u00b0 (FFmpeg auto-rotates)", rotation)
+    if is_hdr:
+        log.info("  HDR detected (%s) in %s", color_transfer, Path(video_path).name)
     if not has_audio:
         log.info("  No audio stream detected in %s", Path(video_path).name)
 
@@ -86,6 +93,7 @@ def probe_video(video_path: str) -> VideoInfo:
         fps=fps,
         rotation=rotation,
         has_audio=has_audio,
+        is_hdr=is_hdr,
     )
 
 
@@ -162,10 +170,28 @@ def _build_drawtext_filter(
     )
 
 
+def _color_filter(is_hdr: bool) -> str:
+    """Return filter snippet to normalize color to SDR BT.709.
+
+    For HDR sources: tone-map to SDR via zscale + hable tone-mapping.
+    For SDR sources: returns empty string (no-op).
+    """
+    if is_hdr:
+        return (
+            "zscale=tin=arib-std-b67:min=2020_ncl:pin=bt2020:"
+            "t=linear:npl=100,format=gbrpf32le,"
+            "zscale=p=bt709,tonemap=hable:desat=0,"
+            "zscale=t=bt709:m=bt709:p=bt709:r=limited,"
+            "format=yuv420p,"
+        )
+    return ""
+
+
 def _build_kenburns_filter(
     clip: ClipPlan,
     input_label: str,
     output_label: str,
+    is_hdr: bool = False,
 ) -> list[str]:
     """
     Build filter chain for Ken Burns zoom/pan effect on a single clip.
@@ -178,9 +204,10 @@ def _build_kenburns_filter(
     if kb not in ALLOWED_KENBURNS or kb == "none":
         # Standard scale + crop (no Ken Burns)
         # fps=30 ensures consistent timebase across all clips for xfade
+        color_prefix = _color_filter(is_hdr)
         return [
-            f"[{input_label}]scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:"
-            f"force_original_aspect_ratio=increase,"
+            f"[{input_label}]{color_prefix}scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:"
+            f"force_original_aspect_ratio=increase:flags=lanczos,"
             f"crop={OUTPUT_WIDTH}:{OUTPUT_HEIGHT},"
             f"setsar=1,fps=30[{output_label}]"
         ]
@@ -218,9 +245,10 @@ def _build_kenburns_filter(
             f"d=1:s={OUTPUT_WIDTH}x{OUTPUT_HEIGHT}:fps=30"
         )
 
+    color_prefix = _color_filter(is_hdr)
     return [
-        f"[{input_label}]scale={os_w}:{os_h}:"
-        f"force_original_aspect_ratio=increase,"
+        f"[{input_label}]{color_prefix}scale={os_w}:{os_h}:"
+        f"force_original_aspect_ratio=increase:flags=lanczos,"
         f"crop={os_w}:{os_h},"
         f"setsar=1,"
         f"fps=30,"
@@ -277,8 +305,11 @@ def _build_composite_filter(
             f"[{src_idx}:v]trim=start={sub.start_time:.3f}:end={sub_end:.3f},"
             f"setpts=PTS-STARTPTS[{vl}]"
         )
+        sub_is_hdr = videos[sub.source_index].is_hdr if videos else False
+        color_prefix = _color_filter(sub_is_hdr)
         filters.append(
-            f"[{vl}]scale={w}:{h}:force_original_aspect_ratio=increase,"
+            f"[{vl}]{color_prefix}scale={w}:{h}:"
+            f"force_original_aspect_ratio=increase:flags=lanczos,"
             f"crop={w}:{h},setsar=1,fps=30[{sl}]"
         )
         sub_labels.append(sl)
@@ -432,7 +463,8 @@ def build_ffmpeg_command(
             )
 
             # Scale/crop with optional Ken Burns effect
-            filters.extend(_build_kenburns_filter(clip, v_clip, v_scaled))
+            clip_is_hdr = videos[clip.source_index].is_hdr
+            filters.extend(_build_kenburns_filter(clip, v_clip, v_scaled, is_hdr=clip_is_hdr))
 
             # Per-clip audio (silence fallback if source has no audio stream)
             # Pad + trim to exact clip duration for A/V sync with xfade
@@ -582,8 +614,12 @@ def build_ffmpeg_command(
         "-map", f"[{current_video}]",
         "-map", "[outa]",
         "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-colorspace", "bt709",        # BT.709 color matrix
+        "-color_primaries", "bt709",   # BT.709 primaries
+        "-color_trc", "bt709",         # BT.709 transfer curve
         "-preset", "fast",
-        "-crf", "23",
+        "-crf", "18",                  # near visually lossless
         "-c:a", "aac",
         "-b:a", "192k",
         "-r", "30",
@@ -602,11 +638,15 @@ def assemble_reel(
     audio_mode: str = "voice",
     transition_style: str = "auto",
     cancel_event: "threading.Event | None" = None,
+    progress_callback: "callable | None" = None,
 ) -> str:
     """Assemble the final reel using FFmpeg.
 
     If *cancel_event* is provided and gets set while FFmpeg is running,
     the subprocess is terminated early and a RuntimeError is raised.
+
+    If *progress_callback(pct, message)* is provided, it is called with
+    encoding progress updates parsed from FFmpeg's stderr output.
     """
     import threading
 
@@ -624,6 +664,37 @@ def assemble_reel(
 
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
+    # --- Read stderr in a background thread to parse FFmpeg progress ---
+    stderr_lines: list[str] = []
+    total_dur = plan.total_duration
+    last_reported_pct = -1
+
+    def _read_stderr():
+        nonlocal last_reported_pct
+        buf = ""
+        for ch in iter(lambda: proc.stderr.read(1), ""):
+            if ch in ("\r", "\n"):
+                line = buf.strip()
+                buf = ""
+                if not line:
+                    continue
+                stderr_lines.append(line)
+                if progress_callback and total_dur > 0 and "time=" in line:
+                    m = re.search(r"time=(\d+):(\d+):([\d.]+)", line)
+                    if m:
+                        secs = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+                        pct = min(int(secs / total_dur * 100), 99)
+                        if pct >= last_reported_pct + 10:
+                            last_reported_pct = pct
+                            speed_m = re.search(r"speed=\s*([\d.]+)x", line)
+                            speed_str = f" ({speed_m.group(1)}x)" if speed_m else ""
+                            progress_callback(pct, f"Encoding: {pct}%{speed_str}")
+            else:
+                buf += ch
+
+    reader = threading.Thread(target=_read_stderr, daemon=True)
+    reader.start()
+
     if cancel_event is not None:
         # Poll until process finishes or cancel is requested
         while proc.poll() is None:
@@ -633,14 +704,16 @@ def assemble_reel(
                     proc.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     proc.kill()
+                reader.join(timeout=2)
                 # Clean up partial output
                 out = Path(output_path)
                 if out.exists():
                     out.unlink(missing_ok=True)
                 raise RuntimeError("Render cancelled by user")
-        stdout, stderr = proc.communicate()
-    else:
-        stdout, stderr = proc.communicate()
+
+    proc.wait()
+    reader.join(timeout=5)
+    stderr = "\n".join(stderr_lines)
 
     if proc.returncode != 0:
         log.error("  FFmpeg stderr:\n%s", stderr)

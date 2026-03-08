@@ -1,4 +1,14 @@
+import { apiFetch } from "./client";
 import type { VideoInfo } from "../types";
+
+export async function deleteVideo(
+  sessionId: string,
+  videoIndex: number,
+): Promise<{ videos: VideoInfo[] }> {
+  return apiFetch(`/api/video/${sessionId}/${videoIndex}`, {
+    method: "DELETE",
+  });
+}
 
 export async function uploadVideos(
   files: File[],

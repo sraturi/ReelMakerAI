@@ -28,7 +28,7 @@ export function CompositePreview({ layout, subSources, className = "" }: Props) 
           <img
             src={subSources[1].thumbnail_url}
             alt="overlay"
-            className="absolute bottom-1 right-1 h-1/3 w-1/3 rounded-sm border-2 border-white object-cover shadow"
+            className="absolute bottom-1 right-1 h-1/3 w-1/3 rounded-sm border-2 border-black object-cover shadow"
           />
         )}
       </div>
@@ -38,7 +38,7 @@ export function CompositePreview({ layout, subSources, className = "" }: Props) 
   const gridClass = LAYOUT_CLASSES[layout] || "grid-cols-1";
 
   return (
-    <div className={`grid gap-[2px] overflow-hidden rounded bg-white ${gridClass} ${className}`}>
+    <div className={`grid gap-[2px] overflow-hidden rounded bg-black ${gridClass} ${className}`}>
       {subSources.map((sub, i) => (
         <img
           key={i}

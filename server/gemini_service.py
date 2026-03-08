@@ -166,11 +166,22 @@ def _call_gemini(
 
 
 def upload_video(video_path: str) -> types.File:
-    """Upload a video file to Gemini for analysis."""
+    """Upload a video file to Gemini for analysis (with retry on 429)."""
     name = Path(video_path).name
     log.info("  Uploading %s to Gemini...", name)
 
-    video_file = client.files.upload(file=video_path)
+    for attempt in range(MAX_RETRIES):
+        try:
+            video_file = client.files.upload(file=video_path)
+            break
+        except Exception as e:
+            if "429" in str(e) and attempt < MAX_RETRIES - 1:
+                wait = (attempt + 1) * RETRY_BACKOFF
+                log.info("  Upload rate limited, waiting %ds before retry...", wait)
+                time.sleep(wait)
+            else:
+                raise
+
     while video_file.state == "PROCESSING":
         time.sleep(2)
         video_file = client.files.get(name=video_file.name)
@@ -318,13 +329,17 @@ def analyze_video_scenes(
     videos: list[VideoInfo],
     uploaded_files: list[types.File],
     model: str | None = None,
+    start_index: int = 0,
 ) -> SceneAnalysisResult:
     """
     Pass 1: Watch videos and describe scenes in ~2-second windows.
     Purely analytical — no editing decisions.
+
+    start_index: global offset so Video N labels match the full video list
+    (used when analyzing in batches).
     """
     videos_context = "\n".join(
-        f"Video {i} ({v.filename}): {v.duration:.1f}s, {v.width}x{v.height}"
+        f"Video {start_index + i} ({v.filename}): {v.duration:.1f}s, {v.width}x{v.height}"
         for i, v in enumerate(videos)
     )
 
@@ -502,7 +517,7 @@ def create_editing_plan_from_scenes(
 {layout_lines}
 
    ONLY use the layout types listed above. Do NOT use any other layout types.
-   You MUST include at least {min(len(allowed), 3)} composite clip(s) — use a DIFFERENT layout for each.
+   You MUST include at least {min(len(allowed), 3)} composite clip(s) \u2014 use a DIFFERENT layout for each.
    Try to use each of the listed layouts at least once.
    Pick moments where the effect makes sense (comparisons, reactions, simultaneous moments).
 

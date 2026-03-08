@@ -2,7 +2,7 @@ import { useCallback, useState } from "react";
 import { Sparkles, AlertCircle } from "lucide-react";
 import { UploadDropzone } from "./UploadDropzone";
 import { VideoFileList } from "./VideoFileList";
-import { uploadVideos } from "../../api/upload";
+import { uploadVideos, deleteVideo } from "../../api/upload";
 import { startAnalyze } from "../../api/analyze";
 import { useSessionStore } from "../../store/useSessionStore";
 import { useUIStore } from "../../store/useUIStore";
@@ -80,6 +80,16 @@ export function UploadPage() {
     setLoading(false);
   }, [cancel, setLoading]);
 
+  const handleRemoveVideo = useCallback(async (index: number) => {
+    if (!sessionId) return;
+    try {
+      const result = await deleteVideo(sessionId, index);
+      setVideos(result.videos);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [sessionId, setVideos, setError]);
+
   const handleAnalyze = useCallback(async () => {
     if (!sessionId) return;
     setError(null);
@@ -105,7 +115,7 @@ export function UploadPage() {
       </div>
 
       <UploadDropzone onFiles={handleFiles} disabled={loading} />
-      <VideoFileList videos={videos} />
+      <VideoFileList videos={videos} sessionId={sessionId} onRemove={handleRemoveVideo} />
 
       {error && (
         <div className="flex items-center gap-2 rounded-lg bg-error/10 p-3 text-sm text-error">

@@ -49,6 +49,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 MAX_RETRIES = 3
 RETRY_BACKOFF = 15  # seconds multiplier per attempt
+GEMINI_ANALYSIS_BATCH_SIZE = 10  # videos per batch in Pass 1 analysis
 
 # --- Video output ---
 OUTPUT_WIDTH = 1080

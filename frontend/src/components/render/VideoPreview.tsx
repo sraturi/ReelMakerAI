@@ -1,4 +1,4 @@
-import { Download, Edit3, Plus } from "lucide-react";
+import { Download, Edit3, MessageSquare, Plus } from "lucide-react";
 import { useUIStore } from "../../store/useUIStore";
 import { useSessionStore } from "../../store/useSessionStore";
 
@@ -41,11 +41,18 @@ export function VideoPreview() {
           Download
         </a>
         <button
+          onClick={() => setStep("prompt")}
+          className="flex w-full items-center justify-center gap-2 rounded-xl border border-border px-6 py-2.5 font-semibold text-text hover:bg-surface-light sm:w-auto"
+        >
+          <MessageSquare size={18} />
+          Change Prompt
+        </button>
+        <button
           onClick={() => setStep("edit")}
           className="flex w-full items-center justify-center gap-2 rounded-xl border border-border px-6 py-2.5 font-semibold text-text hover:bg-surface-light sm:w-auto"
         >
           <Edit3 size={18} />
-          Edit More
+          Edit Clips
         </button>
         <button
           onClick={handleNewProject}
